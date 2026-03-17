@@ -16,8 +16,10 @@ def rtl_to_yosys_json(input_file, output_file=None, top_module="top"):
 
     # Default output filename
     if output_file is None:
-        base = os.path.splitext(input_file)[0]
-        output_file = f"{base}.json"
+        base = os.path.splitext(os.path.basename(input_file))[0]
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(input_file)), "json_output")
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, f"{base}.json")
 
     ext = os.path.splitext(input_file)[1].lower()
 
