@@ -55,12 +55,11 @@ The system implements a **Reasoning Loop** rather than a "one-shot" prompt:
 ├── .env                      # API Keys & Model Configuration
 └── requirements.txt          # Project Dependencies
 
+---
 
 # 🚀 Quick Start Guide (Windows / Git Bash)
 
 Follow these steps to set up your environment, install dependencies, and run the Agentic Pipeline.
-
----
 
 ## 📦 Step 1: Initialize the Virtual Environment
 
@@ -75,10 +74,6 @@ python -m venv venv
 # Activate the environment (Git Bash)
 source venv/Scripts/activate
 ```
-
-> ✅ **Tip:** You should see `(venv)` at the start of your terminal once activated.
-
----
 
 ## 📦 Step 2: Install Dependencies
 
@@ -117,13 +112,11 @@ OPENAI_API_KEY=your_actual_key_here
 OPENAI_MODEL=gpt-4o
 ```
 
-> ⚠️ Never commit your `.env` file to GitHub.
-
 ---
 
 ## 📦 Step 4: Run the Pipeline
 
-Place your SystemVerilog files in the appropriate directory and start the pipeline.
+Place your SystemVerilog (RTL) files in the appropriate directory and start the pipeline.
 
 ### 🔹 Add Input Files
 
@@ -151,8 +144,3 @@ pydantic
 pyyaml
 python-dotenv
 ```
-
-### Running the Pipeline
-Place your SystemVerilog files in `data/raw/` and execute the orchestrator:
-```bash
-python src/main.py
