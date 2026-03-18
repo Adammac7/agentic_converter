@@ -1,0 +1,12 @@
+# Security: Sensitive API Keys
+.env
+
+# Environment: Python Virtual Environments
+venv/
+.venv/
+env/
+
+# Python: Ignore compiled cache files
+__pycache__/
+*.pyc
+

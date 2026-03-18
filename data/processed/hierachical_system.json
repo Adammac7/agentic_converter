@@ -1,0 +1,68 @@
+{
+  "design_name": "top_hierarchy",
+  "definitions": [
+    {
+      "module_name": "leaf_node",
+      "ports": [
+        {
+          "name": "d_in",
+          "dir": "input",
+          "width": 1
+        },
+        {
+          "name": "d_out",
+          "dir": "output",
+          "width": 1
+        }
+      ]
+    },
+    {
+      "module_name": "mid_level",
+      "ports": [
+        {
+          "name": "m_in",
+          "dir": "input",
+          "width": 1
+        },
+        {
+          "name": "m_out",
+          "dir": "output",
+          "width": 1
+        }
+      ]
+    },
+    {
+      "module_name": "top_hierarchy",
+      "ports": [
+        {
+          "name": "sys_in",
+          "dir": "input",
+          "width": 1
+        },
+        {
+          "name": "sys_out",
+          "dir": "output",
+          "width": 1
+        }
+      ]
+    }
+  ],
+  "instantiations": [
+    {
+      "instance_name": "u_leaf",
+      "module_ref": "leaf_node",
+      "connections": {
+        "d_in": "m_in",
+        "d_out": "m_out"
+      }
+    },
+    {
+      "instance_name": "u_mid",
+      "module_ref": "mid_level",
+      "connections": {
+        "m_in": "sys_in",
+        "m_out": "sys_out"
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "design_name": "top_bus",
+  "definitions": [
+    {
+      "module_name": "bus_processor",
+      "ports": [
+        {
+          "name": "data_vld",
+          "dir": "input",
+          "width": 8
+        },
+        {
+          "name": "enable",
+          "dir": "input",
+          "width": 1
+        },
+        {
+          "name": "address",
+          "dir": "input",
+          "width": 32
+        },
+        {
+          "name": "q_out",
+          "dir": "output",
+          "width": 64
+        }
+      ]
+    }
+  ],
+  "instantiations": [
+    {
+      "instance_name": "u_proc",
+      "module_ref": "bus_processor",
+      "connections": {
+        "data_vld": "ext_data",
+        "enable": "ext_en",
+        "address": "w_addr_internal",
+        "q_out": "ext_q"
+      }
+    }
+  ]
+}
