@@ -8,6 +8,7 @@ from .config import (
 from .rtl_to_json_agent import run_architect_agent
 from .rtl_and_json_auditor_agent import run_auditor_agent
 from .stylist_agent import run_stylist_agent
+from .dot_compiler_agent import run_dot_compiler_agent
 
 
 def run_conversion_pipeline(
@@ -19,15 +20,17 @@ def run_conversion_pipeline(
     Conductor for the full RTL-to-Diagram pipeline.
 
     Steps:
-      1. Architect  — extract RTLStructure from raw RTL.
-      2. Audit loop — Auditor validates; on failure, feedback is fed back to
-                      the Architect for up to max_attempts rounds.
-      3. Stylist    — maps user style preferences onto the verified JSON.
+      1. Architect    — extract RTLStructure from raw RTL.
+      2. Audit loop   — Auditor validates; on failure, feedback is fed back to
+                        the Architect for up to max_attempts rounds.
+      3. Stylist      — maps user style preferences onto the verified JSON.
+      4. DOT Compiler — combines structure + styles into a Graphviz DOT string.
 
     Returns:
       {
         "verified_json": dict,   # RTLStructure as a plain dict
         "style_map":     dict,   # StyleConfig as a plain dict
+        "dot_source":    str,    # raw Graphviz DOT syntax
       }
     """
 
@@ -142,10 +145,35 @@ def run_conversion_pipeline(
         _log(f"    {wire}: {styles}")
     _sep("=", color=CYAN)
 
-    # Step 4 — Return final package
+    # Step 4 — DOT Compiler
+    _sep("=", color=CYAN)
+    _log(f"{BOLD}{CYAN}  DOT COMPILER AGENT{RESET}")
+    _sep("=", color=CYAN)
+    _log(f"  Calling DOT Compiler ...")
+
+    try:
+        dot_source = run_dot_compiler_agent(verified_json, style_dict)
+    except Exception as e:
+        _sep("-", color=RED)
+        _log(f"{RED}  [DOT COMPILER ERROR] {e}{RESET}")
+        _sep("-", color=RED)
+        raise
+
+    _sep("-", color=CYAN)
+    _log(f"{BOLD}  DOT Output (first 15 lines):{RESET}")
+    _sep("-", color=CYAN)
+    dot_lines = dot_source.splitlines()
+    for line in dot_lines[:15]:
+        _log(f"    {line}")
+    if len(dot_lines) > 15:
+        _log(f"    ... ({len(dot_lines) - 15} more lines)")
+    _sep("=", color=CYAN)
+
+    # Step 5 — Return final package
     return {
         "verified_json": verified_json,
         "style_map": style_dict,
+        "dot_source": dot_source,
     }
 
 
@@ -154,12 +182,14 @@ def main():
     input_path  = _here / "data" / "raw" / "top.sv"
     json_out    = _here / "data" / "processed" / "top_structure.json"
     style_out   = _here / "data" / "processed" / "top_style.json"
+    dot_out     = _here / "data" / "processed" / "top.dot"
 
     _sep("*", color=BOLD)
     _log(f"{BOLD}  RTL-to-Diagram Multi-Agent Pipeline{RESET}")
     _log(f"  Input:  {input_path}")
     _log(f"  JSON:   {json_out}")
     _log(f"  Style:  {style_out}")
+    _log(f"  DOT:    {dot_out}")
     _sep("*", color=BOLD)
 
     if not input_path.exists():
@@ -184,11 +214,13 @@ def main():
         style_out.write_text(
             json.dumps(result["style_map"], indent=4), encoding="utf-8"
         )
+        dot_out.write_text(result["dot_source"], encoding="utf-8")
 
         _sep("*", color=GREEN)
         _log(f"{GREEN}{BOLD}  [SUCCESS] Outputs saved:{RESET}")
         _log(f"{GREEN}  Structure: {json_out}{RESET}")
         _log(f"{GREEN}  Styles:    {style_out}{RESET}")
+        _log(f"{GREEN}  DOT:       {dot_out}{RESET}")
         _sep("*", color=GREEN)
 
     except Exception as e:
