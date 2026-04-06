@@ -1,0 +1,255 @@
+        digraph top {
+    rankdir=LR;
+    splines=ortho;
+    fontname="Helvetica";
+    arrowType=tee;
+    node [fontname="Helvetica", fontsize=10, style=filled, fillcolor=white];
+    edge [fontname="Helvetica", fontsize=8, dir=none];
+    compound=true;
+    nodesep=0.3;
+    ranksep=0.5;
+
+    // =========================================================================
+    // External I/O ports
+    // =========================================================================
+    subgraph cluster_ext_in {
+        label="External Inputs";
+        style=filled; color=black; fillcolor="#E6F1FB";
+        class="external io";
+        clk       [label="clk",           shape=Mdiamond, fillcolor="#B5D4F4"];
+        rst_n     [label="rst_n",          shape=Mdiamond, fillcolor="#B5D4F4"];
+        enable    [label="enable",         shape=Mdiamond, fillcolor="#B5D4F4"];
+        cfg_mode  [label="cfg_mode[1:0]",  shape=Mdiamond, fillcolor="#B5D4F4"];
+        data_in   [label="data_in[7:0]",   shape=Mdiamond, fillcolor="#B5D4F4"];
+    }
+
+    subgraph cluster_ext_out {
+        label="External Outputs";
+        style=filled; color=black; fillcolor="#EAF3DE";
+        class="external io";
+        done_ext         [label="done",          shape=Msquare, fillcolor="#C0DD97"];
+        result_ext       [label="result[7:0]",   shape=Msquare, fillcolor="#C0DD97"];
+        result_valid_ext [label="result_valid",   shape=Msquare, fillcolor="#C0DD97"];
+    }
+
+    // =========================================================================
+    // top module – outer cluster
+    // =========================================================================
+    subgraph cluster_top {
+        label="top";
+        style=filled; color=black; fillcolor="#F1EFE8"; fontsize=14;
+        class="top hierarchy";
+
+        // =================================================================
+        // u_ctrl (ctrl)
+        // =================================================================
+        subgraph cluster_ctrl {
+            label="u_ctrl  (ctrl)";
+            style=filled; color=black; fillcolor="#EEEDFE";
+            class="control 1000";
+            margin=2;
+
+            // Input port pins (left edge)
+            ctrl_in_clk      [label="clk",          shape=box, fillcolor="#D8D5FA", width=0.7, height=0.25, fontsize=8];
+            ctrl_in_rst_n    [label="rst_n",         shape=box, fillcolor="#D8D5FA", width=0.7, height=0.25, fontsize=8];
+            ctrl_in_enable   [label="enable",        shape=box, fillcolor="#D8D5FA", width=0.7, height=0.25, fontsize=8];
+            ctrl_in_cfg_mode [label="cfg_mode[1:0]", shape=box, fillcolor="#D8D5FA", width=0.9, height=0.25, fontsize=8];
+
+            // Core logic
+            ctrl_core [label="ctrl\ncore", shape=box3d, fillcolor="#CECBF6", width=1.0, height=0.6];
+
+            // Output port pins (right edge)
+            ctrl_out_start    [label="start",          shape=box, fillcolor="#B5B0EE", width=0.7, height=0.25, fontsize=8];
+            ctrl_out_done     [label="done",           shape=box, fillcolor="#B5B0EE", width=0.7, height=0.25, fontsize=8];
+            ctrl_out_mem_req  [label="mem_req",        shape=box, fillcolor="#B5B0EE", width=0.7, height=0.25, fontsize=8];
+            ctrl_out_mem_addr [label="mem_addr[7:0]",  shape=box, fillcolor="#B5B0EE", width=0.9, height=0.25, fontsize=8];
+
+            // Internal wiring
+            ctrl_in_clk      -> ctrl_core [style=dashed, color="#9993D6"];
+            ctrl_in_rst_n    -> ctrl_core [style=dashed, color="#9993D6"];
+            ctrl_in_enable   -> ctrl_core [style=dashed, color="#9993D6"];
+            ctrl_in_cfg_mode -> ctrl_core [style=dashed, color="#9993D6"];
+            ctrl_core -> ctrl_out_start    [style=dashed, color="#9993D6"];
+            ctrl_core -> ctrl_out_done     [style=dashed, color="#9993D6"];
+            ctrl_core -> ctrl_out_mem_req  [style=dashed, color="#9993D6"];
+            ctrl_core -> ctrl_out_mem_addr [style=dashed, color="#9993D6"];
+        }
+
+        // =================================================================
+        // u_datapath (datapath)
+        // =================================================================
+        subgraph cluster_datapath {
+            label="u_datapath  (datapath)";
+            style=filled; color=black; fillcolor="#E1F5EE";
+            class="datapath 2000";
+            margin=2;
+
+            dp_in_clk      [label="clk",           shape=box, fillcolor="#C0EBDA", width=0.7, height=0.25, fontsize=8];
+            dp_in_rst_n    [label="rst_n",          shape=box, fillcolor="#C0EBDA", width=0.7, height=0.25, fontsize=8];
+            dp_in_start    [label="start",          shape=box, fillcolor="#C0EBDA", width=0.7, height=0.25, fontsize=8];
+            dp_in_data_in  [label="data_in[7:0]",   shape=box, fillcolor="#C0EBDA", width=0.9, height=0.25, fontsize=8];
+            dp_in_mem_data [label="mem_data[7:0]",   shape=box, fillcolor="#C0EBDA", width=0.9, height=0.25, fontsize=8];
+            dp_in_mem_ack  [label="mem_ack",        shape=box, fillcolor="#C0EBDA", width=0.7, height=0.25, fontsize=8];
+
+            dp_core [label="datapath\ncore", shape=box3d, fillcolor="#9FE1CB", width=1.0, height=0.6];
+
+            dp_out_data_out [label="data_out[7:0]", shape=box, fillcolor="#7FD4B2", width=0.9, height=0.25, fontsize=8];
+            dp_out_valid    [label="valid",          shape=box, fillcolor="#7FD4B2", width=0.7, height=0.25, fontsize=8];
+            dp_out_wr_en    [label="wr_en",          shape=box, fillcolor="#7FD4B2", width=0.7, height=0.25, fontsize=8];
+
+            dp_in_clk      -> dp_core [style=dashed, color="#6BBF9E"];
+            dp_in_rst_n    -> dp_core [style=dashed, color="#6BBF9E"];
+            dp_in_start    -> dp_core [style=dashed, color="#6BBF9E"];
+            dp_in_data_in  -> dp_core [style=dashed, color="#6BBF9E"];
+            dp_in_mem_data -> dp_core [style=dashed, color="#6BBF9E"];
+            dp_in_mem_ack  -> dp_core [style=dashed, color="#6BBF9E"];
+            dp_core -> dp_out_data_out [style=dashed, color="#6BBF9E"];
+            dp_core -> dp_out_valid    [style=dashed, color="#6BBF9E"];
+            dp_core -> dp_out_wr_en    [style=dashed, color="#6BBF9E"];
+        }
+
+        // =================================================================
+        // u_memory_intf (memory_intf)
+        // =================================================================
+        subgraph cluster_memory_intf {
+            label="u_memory_intf  (memory_intf)";
+            style=filled; color=black; fillcolor="#FAECE7";
+            class="memory 3000";
+            margin=2;
+
+            mem_in_clk      [label="clk",           shape=box, fillcolor="#F5D5CA", width=0.7, height=0.25, fontsize=8];
+            mem_in_rst_n    [label="rst_n",          shape=box, fillcolor="#F5D5CA", width=0.7, height=0.25, fontsize=8];
+            mem_in_mem_req  [label="mem_req",        shape=box, fillcolor="#F5D5CA", width=0.7, height=0.25, fontsize=8];
+            mem_in_mem_addr [label="mem_addr[7:0]",  shape=box, fillcolor="#F5D5CA", width=0.9, height=0.25, fontsize=8];
+
+            mem_core [label="memory_intf\ncore", shape=box3d, fillcolor="#F5C4B3", width=1.2, height=0.6];
+
+            mem_out_mem_data [label="mem_data[7:0]", shape=box, fillcolor="#E8A88E", width=0.9, height=0.25, fontsize=8];
+            mem_out_mem_ack  [label="mem_ack",       shape=box, fillcolor="#E8A88E", width=0.7, height=0.25, fontsize=8];
+
+            mem_in_clk      -> mem_core [style=dashed, color="#C4856B"];
+            mem_in_rst_n    -> mem_core [style=dashed, color="#C4856B"];
+            mem_in_mem_req  -> mem_core [style=dashed, color="#C4856B"];
+            mem_in_mem_addr -> mem_core [style=dashed, color="#C4856B"];
+            mem_core -> mem_out_mem_data [style=dashed, color="#C4856B"];
+            mem_core -> mem_out_mem_ack  [style=dashed, color="#C4856B"];
+        }
+
+        // =================================================================
+        // u_fifo (fifo)
+        // =================================================================
+        subgraph cluster_fifo {
+            label="u_fifo  (fifo)";
+            style=filled; color=black; fillcolor="#FAEEDA";
+            class="buffer 4000";
+            margin=2;
+
+            fifo_in_clk   [label="clk",      shape=box, fillcolor="#F5DEB8", width=0.7, height=0.25, fontsize=8];
+            fifo_in_rst_n [label="rst_n",     shape=box, fillcolor="#F5DEB8", width=0.7, height=0.25, fontsize=8];
+            fifo_in_wr_en [label="wr_en",     shape=box, fillcolor="#F5DEB8", width=0.7, height=0.25, fontsize=8];
+            fifo_in_din   [label="din[7:0]",  shape=box, fillcolor="#F5DEB8", width=0.9, height=0.25, fontsize=8];
+            fifo_in_rd_en [label="rd_en",     shape=box, fillcolor="#F5DEB8", width=0.7, height=0.25, fontsize=8];
+
+            fifo_core [label="fifo\ncore", shape=box3d, fillcolor="#FAC775", width=1.0, height=0.6];
+
+            fifo_out_dout  [label="dout[7:0]", shape=box, fillcolor="#E8B45D", width=0.9, height=0.25, fontsize=8];
+            fifo_out_full  [label="full",       shape=box, fillcolor="#E8B45D", width=0.7, height=0.25, fontsize=8];
+            fifo_out_empty [label="empty",      shape=box, fillcolor="#E8B45D", width=0.7, height=0.25, fontsize=8];
+
+            fifo_in_clk   -> fifo_core [style=dashed, color="#C49644"];
+            fifo_in_rst_n -> fifo_core [style=dashed, color="#C49644"];
+            fifo_in_wr_en -> fifo_core [style=dashed, color="#C49644"];
+            fifo_in_din   -> fifo_core [style=dashed, color="#C49644"];
+            fifo_in_rd_en -> fifo_core [style=dashed, color="#C49644"];
+            fifo_core -> fifo_out_dout  [style=dashed, color="#C49644"];
+            fifo_core -> fifo_out_full  [style=dashed, color="#C49644"];
+            fifo_core -> fifo_out_empty [style=dashed, color="#C49644"];
+        }
+
+        // =================================================================
+        // u_output_formatter (output_formatter)
+        // =================================================================
+        subgraph cluster_output_formatter {
+            label="u_output_formatter  (output_formatter)";
+            style=filled; color=black; fillcolor="#FBEAF0";
+            class="output 5000";
+            margin=2;
+
+            of_in_clk        [label="clk",            shape=box, fillcolor="#F5D0DE", width=0.7, height=0.25, fontsize=8];
+            of_in_rst_n      [label="rst_n",           shape=box, fillcolor="#F5D0DE", width=0.7, height=0.25, fontsize=8];
+            of_in_raw_data   [label="raw_data[7:0]",   shape=box, fillcolor="#F5D0DE", width=0.9, height=0.25, fontsize=8];
+            of_in_data_valid [label="data_valid",      shape=box, fillcolor="#F5D0DE", width=0.7, height=0.25, fontsize=8];
+            of_in_empty      [label="empty",           shape=box, fillcolor="#F5D0DE", width=0.7, height=0.25, fontsize=8];
+
+            of_core [label="output_formatter\ncore", shape=box3d, fillcolor="#F4C0D1", width=1.4, height=0.6];
+
+            of_out_result       [label="result[7:0]",  shape=box, fillcolor="#E8A0B5", width=0.9, height=0.25, fontsize=8];
+            of_out_result_valid [label="result_valid",  shape=box, fillcolor="#E8A0B5", width=0.7, height=0.25, fontsize=8];
+            of_out_rd_en        [label="rd_en",         shape=box, fillcolor="#E8A0B5", width=0.7, height=0.25, fontsize=8];
+
+            of_in_clk        -> of_core [style=dashed, color="#C4808E"];
+            of_in_rst_n      -> of_core [style=dashed, color="#C4808E"];
+            of_in_raw_data   -> of_core [style=dashed, color="#C4808E"];
+            of_in_data_valid -> of_core [style=dashed, color="#C4808E"];
+            of_in_empty      -> of_core [style=dashed, color="#C4808E"];
+            of_core -> of_out_result       [style=dashed, color="#C4808E"];
+            of_core -> of_out_result_valid [style=dashed, color="#C4808E"];
+            of_core -> of_out_rd_en        [style=dashed, color="#C4808E"];
+        }
+    }
+
+    // =========================================================================
+    // External input connections (wires enter module input ports)
+    // =========================================================================
+    clk -> ctrl_in_clk    [class="clock"];
+    clk -> dp_in_clk      [class="clock"];
+    clk -> mem_in_clk     [class="clock"];
+    clk -> fifo_in_clk    [class="clock"];
+    clk -> of_in_clk      [class="clock"];
+
+    rst_n -> ctrl_in_rst_n  [class="reset"];
+    rst_n -> dp_in_rst_n    [class="reset"];
+    rst_n -> mem_in_rst_n   [class="reset"];
+    rst_n -> fifo_in_rst_n  [class="reset"];
+    rst_n -> of_in_rst_n    [class="reset"];
+
+    enable   -> ctrl_in_enable;
+    cfg_mode -> ctrl_in_cfg_mode;
+    data_in  -> dp_in_data_in;
+
+    // =========================================================================
+    // External output connections (wires leave module output ports)
+    // =========================================================================
+    ctrl_out_done       -> done_ext;
+    of_out_result       -> result_ext;
+    of_out_result_valid -> result_valid_ext;
+
+    // =========================================================================
+    // Inter-module connections (output port -> input port)
+    // =========================================================================
+
+    // ctrl -> datapath: w_start
+    ctrl_out_start -> dp_in_start [label="w_start", class="crosscluster control-to-datapath"];
+
+    // ctrl -> memory_intf: w_mem_req, w_mem_addr
+    ctrl_out_mem_req  -> mem_in_mem_req  [label="w_mem_req",  class="crosscluster control-to-memory"];
+    ctrl_out_mem_addr -> mem_in_mem_addr [label="w_mem_addr", class="crosscluster control-to-memory"];
+
+    // memory_intf -> datapath: w_mem_data, w_mem_ack
+    mem_out_mem_data -> dp_in_mem_data [label="w_mem_data", class="crosscluster memory-to-datapath"];
+    mem_out_mem_ack  -> dp_in_mem_ack  [label="w_mem_ack",  class="crosscluster memory-to-datapath"];
+
+    // datapath -> fifo: w_wr_en, w_dp_data_out
+    dp_out_wr_en    -> fifo_in_wr_en [label="w_wr_en",       class="crosscluster datapath-to-fifo"];
+    dp_out_data_out -> fifo_in_din   [label="w_dp_data_out",  class="crosscluster datapath-to-fifo"];
+
+    // datapath -> output_formatter: w_dp_valid
+    dp_out_valid -> of_in_data_valid [label="w_dp_valid", class="crosscluster datapath-to-output"];
+
+    // output_formatter -> fifo: w_rd_en
+    of_out_rd_en -> fifo_in_rd_en [label="w_rd_en", class="crosscluster output-to-fifo"];
+
+    // fifo -> output_formatter: w_fifo_dout, w_fifo_empty
+    fifo_out_dout  -> of_in_raw_data [label="w_fifo_dout",  class="crosscluster fifo-to-output"];
+    fifo_out_empty -> of_in_empty    [label="w_fifo_empty",  class="crosscluster fifo-to-output"];
+}
