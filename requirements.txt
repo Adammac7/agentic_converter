@@ -1,0 +1,13 @@
+# --- Core AI & Orchestration ---
+openai>=1.0.0
+langchain>=0.1.0
+langchain-openai>=0.1.0
+langchain-core>=0.1.0
+
+# --- Data Validation & Environment ---
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# --- Hardware & Graph Visualization ---
+PyYAML>=6.0
+pydot>=2.0.0

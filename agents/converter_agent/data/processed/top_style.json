@@ -1,0 +1,24 @@
+{
+    "module_styles": {
+        "u_ctrl": {
+            "color": null,
+            "fillcolor": "blue",
+            "style": "filled",
+            "shape": "box"
+        },
+        "u_memory_intf": {
+            "color": null,
+            "fillcolor": "orange",
+            "style": "filled",
+            "shape": "box"
+        }
+    },
+    "wire_styles": {
+        "clk": {
+            "color": null,
+            "fillcolor": null,
+            "style": "dashed",
+            "shape": null
+        }
+    }
+}
