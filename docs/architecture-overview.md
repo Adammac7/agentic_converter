@@ -24,8 +24,8 @@ This project is organized so the orchestration framework stays stable while agen
   - Pipeline definitions (which agents run and in what order).
   - Lets you change orchestration flow without changing Python code.
 
-- `tests/`
-  - Tests for orchestrator behavior and agent integration.
+- `tools/`
+  - Shared utilities callable by the orchestrator (e.g. Graphviz / diagram rendering).
 
 ## `core/` File Responsibilities
 
