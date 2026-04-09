@@ -33,7 +33,7 @@ class PipelineState(TypedDict):
     verified_json:      Optional[dict]
     style_map:          Optional[dict]
     dot_source:         Optional[str]
-    svg_output:         Optional[str]   # FIXME: placeholder string for now
+    svg_output:         Optional[str]
 
 
 # Node functions ────────────────────────────────────────────────────────────
