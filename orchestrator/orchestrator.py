@@ -188,35 +188,3 @@ def run_pipeline(rtl_code: str, user_style_prompt: str, user_edit_prompt: str) -
 
     return app.invoke(initial_state)
 
-
-if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-
-    # Path is relative to the project root (one level above this file)
-    rtl_path = Path(__file__).parent.parent / "archive" / "RTL" / "test_top.v"
-    if not rtl_path.exists():
-        print(f"Error: {rtl_path} not found.")
-        sys.exit(1)
-
-    final = run_pipeline(
-        rtl_code=rtl_path.read_text(encoding="utf-8"),
-        user_style_prompt=(
-            "Make the controller blue, the memory interface orange, "
-            "and use dashed lines for all clock signals."
-        ),
-        user_edit_prompt =(
-            "Make the controller Red, the memory interface orange, "
-            "and use dashed lines for all clock signals."
-        )
-    )
-
-    print("\n── Final state ──")
-    print(f"  SVG length : {len(final['svg_output'] or '')} chars")
-    print(f"  DOT preview: {(final['dot_source'] or '')[:120]}")
-
-    # write svg to disk so we can read it. 
-    # FIXME: later pass this into the frontend
-    svg_path = Path("output.svg")
-    svg_path.write_text(final["svg_output"], encoding="utf-8")
-    print(f"  SVG saved to: {svg_path.resolve()}")
