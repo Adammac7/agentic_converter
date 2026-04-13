@@ -13,10 +13,10 @@ from typing import TypedDict, Optional
 
 from langgraph.graph import StateGraph, END
 
-from agents.converter_agent.rtl_to_json_agent import run_architect_agent
-from agents.converter_agent.rtl_and_json_auditor_agent import run_auditor_agent
-from agents.converter_agent.stylist_agent import run_stylist_agent
-from agents.converter_agent.dot_compiler_agent import run_dot_compiler_agent
+from agents.architect.agent import run_architect_agent
+from agents.auditor.agent import run_auditor_agent
+from agents.stylist.agent import run_stylist_agent
+from agents.dot_compiler.agent import run_dot_compiler_agent
 from tools.graphviz_quickchart import render_dot_to_svg, GraphvizRenderError
 
 
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     # Path is relative to the project root (one level above this file)
-    rtl_path = Path(__file__).parent.parent / "agents" / "converter_agent" / "data" / "raw" / "top.sv"
+    rtl_path = Path(__file__).parent.parent / "archive" / "RTL" / "test_top.v"
     if not rtl_path.exists():
         print(f"Error: {rtl_path} not found.")
         sys.exit(1)

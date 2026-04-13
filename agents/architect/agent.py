@@ -1,6 +1,19 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from .config import OPENAI_MODEL, load_prompt
-from .tools.json_schema import RTLStructure
+
+from .schema import RTLStructure
+
+
+load_dotenv()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+_PROMPT_FILE = Path(__file__).with_name("prompt.md")
+
+
+def _load_prompt(**kwargs) -> str:
+    return _PROMPT_FILE.read_text(encoding="utf-8").strip().format(**kwargs)
 
 
 def run_architect_agent(rtl_code: str, feedback: str = "") -> RTLStructure:
@@ -10,5 +23,5 @@ def run_architect_agent(rtl_code: str, feedback: str = "") -> RTLStructure:
     """
     llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
     structured_llm = llm.with_structured_output(RTLStructure, method="function_calling")
-    prompt = load_prompt("Architect Prompt", rtl_code=rtl_code, feedback=feedback)
+    prompt = _load_prompt(rtl_code=rtl_code, feedback=feedback)
     return structured_llm.invoke(prompt)

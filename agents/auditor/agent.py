@@ -1,6 +1,19 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from .config import OPENAI_MODEL, load_prompt
-from .tools.auditor_schema import AuditReport
+
+from .schema import AuditReport
+
+
+load_dotenv()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+_PROMPT_FILE = Path(__file__).with_name("prompt.md")
+
+
+def _load_prompt(**kwargs) -> str:
+    return _PROMPT_FILE.read_text(encoding="utf-8").strip().format(**kwargs)
 
 
 def run_auditor_agent(rtl_code: str, generated_json: str) -> AuditReport:
@@ -10,5 +23,5 @@ def run_auditor_agent(rtl_code: str, generated_json: str) -> AuditReport:
     """
     llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
     auditor = llm.with_structured_output(AuditReport, method="function_calling")
-    prompt = load_prompt("Auditor Prompt", rtl_code=rtl_code, generated_json=generated_json)
+    prompt = _load_prompt(rtl_code=rtl_code, generated_json=generated_json)
     return auditor.invoke(prompt)

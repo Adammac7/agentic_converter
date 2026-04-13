@@ -65,8 +65,10 @@ Each agent folder follows the same pattern:
 
 Current scaffold:
 
-- `agents/converter_agent/`
-- `agents/validator_agent/`
+- `agents/architect/`
+- `agents/auditor/`
+- `agents/stylist/`
+- `agents/dot_compiler/`
 
 ## `pipelines/default.toml`
 

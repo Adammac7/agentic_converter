@@ -1,11 +1,18 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from .config import OPENAI_MODEL, load_prompt
-from .tools.style_schema import StyleConfig, ComponentStyle
+
+from .schema import StyleConfig
+
+load_dotenv()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+_PROMPT_FILE = Path(__file__).with_name("prompt.md")
 
 
-def _clean_keys(d: dict) -> dict:
-    """Strip extra quotes and whitespace that the LLM sometimes wraps around dict keys."""
-    return {k.strip().strip('"').strip("'"): v for k, v in d.items()}
+def _load_prompt(**kwargs) -> str:
+    return _PROMPT_FILE.read_text(encoding="utf-8").strip().format(**kwargs)
 
 
 def run_stylist_agent(architect_json: str, user_request: str) -> StyleConfig:
@@ -16,17 +23,14 @@ def run_stylist_agent(architect_json: str, user_request: str) -> StyleConfig:
     """
     llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
     stylist = llm.with_structured_output(StyleConfig, method="function_calling")
-    prompt = load_prompt("Stylist Prompt", architect_json=architect_json, user_request=user_request)
+    prompt = _load_prompt(architect_json=architect_json, user_request=user_request)
     result = stylist.invoke(prompt)
 
-    # Sanitize keys in case the LLM wrapped them in extra quotes/whitespace
     clean_module_styles = {
-        k.strip().strip('"').strip("'"): v
-        for k, v in result.module_styles.items()
+        k.strip().strip('"').strip("'"): v for k, v in result.module_styles.items()
     }
     clean_wire_styles = {
-        k.strip().strip('"').strip("'"): v
-        for k, v in result.wire_styles.items()
+        k.strip().strip('"').strip("'"): v for k, v in result.wire_styles.items()
     }
 
     return StyleConfig(
