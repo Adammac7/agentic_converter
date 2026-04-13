@@ -1,21 +1,16 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface FormState {
   file: File | null;
-  stylePrompt: string;
-  editPrompt: string;
+  customizationText: string;
 }
 
-type Status = "idle" | "loading" | "success" | "error";
-
-interface ApiResponse {
-  svg_output: string;
-  dot_source: string;
-}
+type Status = "idle" | "loading" | "error";
 
 // ── Icons (inline SVG — no external dependencies) ─────────────────────────────
 
@@ -96,18 +91,6 @@ function DropZone({ file, onFile }: DropZoneProps) {
     [onFile]
   );
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => setIsDragging(false);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = e.target.files?.[0];
-    if (picked) onFile(picked);
-  };
-
   return (
     <div
       role="button"
@@ -116,8 +99,8 @@ function DropZone({ file, onFile }: DropZoneProps) {
       onClick={() => inputRef.current?.click()}
       onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
       onDrop={handleDrop}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={() => setIsDragging(false)}
       className={[
         "relative flex flex-col items-center justify-center gap-3",
         "rounded-xl border-2 border-dashed px-6 py-10 cursor-pointer",
@@ -132,15 +115,13 @@ function DropZone({ file, onFile }: DropZoneProps) {
         type="file"
         accept=".sv,.v,.vh,.svh"
         className="sr-only"
-        onChange={handleChange}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }}
       />
 
       {file ? (
         <>
           <PaperclipIcon className="h-9 w-9 text-[#FF8200]" />
-          <p className="text-sm font-medium text-[#002D54] truncate max-w-xs">
-            {file.name}
-          </p>
+          <p className="text-sm font-medium text-[#002D54] truncate max-w-xs">{file.name}</p>
           <p className="text-xs text-gray-400">
             {(file.size / 1024).toFixed(1)} KB &mdash; click to replace
           </p>
@@ -152,8 +133,7 @@ function DropZone({ file, onFile }: DropZoneProps) {
             Drag &amp; drop your RTL file here
           </p>
           <p className="text-xs text-gray-400">
-            or{" "}
-            <span className="text-[#FF8200] underline">browse</span>
+            or <span className="text-[#FF8200] underline">browse</span>
             {" "}&mdash; .sv, .v, .svh accepted
           </p>
         </>
@@ -162,41 +142,15 @@ function DropZone({ file, onFile }: DropZoneProps) {
   );
 }
 
-// ── SVG Preview ───────────────────────────────────────────────────────────────
-
-function SvgPreview({ svg }: { svg: string }) {
-  return (
-    <section className="mt-8">
-      <h2 className="text-sm font-semibold uppercase tracking-widest text-[#002D54] mb-3">
-        Generated Diagram
-      </h2>
-      <div
-        className="rounded-xl border border-gray-200 bg-white p-4 overflow-auto shadow-sm"
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
-    </section>
-  );
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Page() {
-  const [form, setForm] = useState<FormState>({
-    file: null,
-    stylePrompt: "",
-    editPrompt: "",
-  });
-
+  const router = useRouter();
+  const [form, setForm] = useState<FormState>({ file: null, customizationText: "" });
   const [status, setStatus] = useState<Status>("idle");
-  const [result, setResult] = useState<ApiResponse | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string>("");
+  const [errorMsg, setErrorMsg] = useState("");
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
-
-  const setFile = useCallback(
-    (f: File) => setForm((prev) => ({ ...prev, file: f })),
-    []
-  );
+  const setFile = useCallback((f: File) => setForm((p) => ({ ...p, file: f })), []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -209,31 +163,44 @@ export default function Page() {
 
     setStatus("loading");
     setErrorMsg("");
-    setResult(null);
 
     try {
       const body = new FormData();
       body.append("rtl_file", form.file);
-      body.append("style_prompt", form.stylePrompt);
-      body.append("edit_prompt", form.editPrompt);
+      body.append("customization_text", form.customizationText);
 
-      const res = await fetch("/api/convert", { method: "POST", body });
+      const res = await fetch("/backend/upload-rtl", { method: "POST", body });
+
+      // Read the body ONCE as text, then parse — avoids "body stream already
+      // read" that occurs when res.json() throws and a catch calls res.text().
+      const rawText = await res.text();
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Server error ${res.status}`);
+        let message = `Server error ${res.status}`;
+        try {
+          const errData = JSON.parse(rawText);
+          message = errData?.detail ?? rawText;
+        } catch {
+          message = rawText || message;
+        }
+        throw new Error(message);
       }
 
-      const data: ApiResponse = await res.json();
-      setResult(data);
-      setStatus("success");
+      const { task_id, svg_url }: { task_id: string; svg_url: string } =
+        JSON.parse(rawText);
+
+      // Build the full image URL so the diagram-review page can use it
+      // directly in an <img> src without an extra fetch.
+      const imgUrl = `http://localhost:8000${svg_url}`;
+
+      router.push(
+        `/diagram-review?task_id=${encodeURIComponent(task_id)}&img_url=${encodeURIComponent(imgUrl)}`
+      );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Unexpected error.");
       setStatus("error");
     }
   };
-
-  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <main className="min-h-screen bg-[#F4F4F4] flex items-start justify-center px-4 py-12">
@@ -245,14 +212,10 @@ export default function Page() {
             className="flex items-center justify-center rounded-md px-3 py-1.5"
             style={{ backgroundColor: "#FF8200" }}
           >
-            <span className="text-white font-extrabold text-lg tracking-tight leading-none">
-              NXP
-            </span>
+            <span className="text-white font-extrabold text-lg tracking-tight leading-none">NXP</span>
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-[#002D54] leading-tight">
-              System Configuration
-            </h1>
+            <h1 className="text-2xl font-bold text-[#002D54] leading-tight">System Configuration</h1>
             <p className="text-sm text-gray-500 mt-0.5">
               Convert SystemVerilog RTL to AI-generated architecture diagrams
             </p>
@@ -266,33 +229,28 @@ export default function Page() {
             {/* File upload */}
             <fieldset>
               <legend className="block text-sm font-semibold text-[#002D54] mb-2">
-                RTL Source File
-                <span className="ml-1 text-[#FF8200]">*</span>
+                RTL Source File <span className="text-[#FF8200]">*</span>
               </legend>
               <DropZone file={form.file} onFile={setFile} />
             </fieldset>
 
-            {/* Style prompt */}
+            {/* Customization prompt */}
             <div>
               <label
-                htmlFor="style-prompt"
+                htmlFor="customization-text"
                 className="block text-sm font-semibold text-[#002D54] mb-1.5"
               >
-                Customization Prompt
-                <span className="ml-1 text-[#FF8200]">*</span>
+                Customization Notes
               </label>
               <p className="text-xs text-gray-400 mb-2">
-                Describe how the diagram should look — colors, layout, emphasis.
+                Optional — describe how the diagram should look: colors, layout, emphasis.
               </p>
               <textarea
-                id="style-prompt"
+                id="customization-text"
                 rows={3}
                 placeholder='e.g. "Make the controller blue, use dashed lines for clock signals."'
-                value={form.stylePrompt}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, stylePrompt: e.target.value }))
-                }
-                required
+                value={form.customizationText}
+                onChange={(e) => setForm((p) => ({ ...p, customizationText: e.target.value }))}
                 className={[
                   "w-full resize-none rounded-lg border px-4 py-3 text-sm",
                   "text-gray-800 placeholder-gray-400",
@@ -328,18 +286,14 @@ export default function Page() {
               {status === "loading" ? (
                 <>
                   <SpinnerIcon className="h-4 w-4 animate-spin" />
-                  Processing pipeline&hellip;
+                  Agent is processing&hellip;
                 </>
               ) : (
                 "Generate Diagram"
               )}
             </button>
-          </form>
 
-          {/* SVG result */}
-          {status === "success" && result?.svg_output && (
-            <SvgPreview svg={result.svg_output} />
-          )}
+          </form>
         </div>
 
         {/* Footer */}

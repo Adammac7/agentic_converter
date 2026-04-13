@@ -9,3 +9,5 @@ env/
 # Python: Ignore compiled cache files
 __pycache__/
 *.pyc
+
+CLAUDE.md
