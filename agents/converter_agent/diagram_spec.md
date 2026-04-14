@@ -1,281 +1,356 @@
-# RTL Block Diagram — DOT Specification
+# DOT Compiler Prompt
 
-## 1. Graph-Level Settings
+You are a Graphviz DOT compiler for hierarchical hardware block diagrams.
+Convert the RTL structure JSON and style map into a single valid DOT file
+that renders a professional chip block diagram with encapsulated sub-modules,
+orthogonal wiring, and color-coded signal paths.
 
-| Attribute     | Value         | Purpose |
-|---------------|---------------|---------|
-| `rankdir`     | `LR`          | Signal flow left-to-right (inputs on west, outputs on east) |
-| `splines`     | `ortho`       | Orthogonal (right-angle) wire routing; use `xlabel` instead of `label` on edges since ortho does not support edge labels |
-| `fontname`    | `"Helvetica"` | Graph-level default font |
-| `arrowType`   | `tee`         | T-shaped arrowheads (EDA bus-tap convention) |
-| `compound`    | `true`        | Allows edges to target clusters (required for `lhead`/`ltail`) |
-| `nodesep`     | `0.4`         | Vertical spacing between nodes within the same rank |
-| `ranksep`     | `0.7`         | Horizontal spacing between ranks (i.e. between module columns) |
+## INPUTS
 
-## 2. Node Defaults
+STRUCTURE JSON:
+{verified_json}
 
-Set via `node [...]` at graph scope:
+STYLE MAP:
+{style_map}
 
-| Attribute   | Value         |
-|-------------|---------------|
-| `fontname`  | `"Helvetica"` |
-| `fontsize`  | `10`          |
-| `style`     | `filled`      |
-| `fillcolor` | `white`       |
+## STRICT OUTPUT RULES
 
-All nodes inherit these unless overridden at the individual node level.
+1. Output ONLY raw DOT syntax. No markdown, no code fences, no explanation.
+2. The first line must be: digraph <module_name from JSON> {{
+3. The last line must be: }}
+4. Because splines=ortho does not support the `label` attribute on edges,
+   use `xlabel` for all wire net names on inter-module and external edges.
+5. Emit DOT sections in this exact order:
+   a. Graph-level attributes
+   b. cluster_ext_in (external input ports)
+   c. cluster_ext_out (external output ports)
+   d. cluster_top containing:
+      i.   Sub-module clusters in instances[] array order
+      ii.  Invisible ordering edges (between core nodes)
+      iii. Bus relay point nodes
+      iv.  Bus relay edge chains (trunk + taps)
+   e. External I/O edges (outside cluster_top)
+   f. Inter-module edges (outside cluster_top)
+   g. Backward/feedback edges (outside cluster_top)
+   h. Closing brace
 
-## 3. Edge Defaults
+---
 
-Set via `edge [...]` at graph scope:
+## GRAPH ATTRIBUTES
 
-| Attribute  | Value         |
-|------------|---------------|
-| `fontname` | `"Helvetica"` |
-| `fontsize` | `8`           |
-| `dir`      | `none`        |
-
-Edges are **undirected by default** (`dir=none`). Arrowheads are only added on specific edges that need directional indication (e.g. backward links use `dir=back`).
-
-## 4. Color Palette
-
-### 4.1 Module Cluster Backgrounds (three-tone per module)
-
-Each module uses a **three-shade hue family**: a light cluster fill, a medium input-port fill, and a darker output-port fill. The core node uses the medium-dark shade.
-
-| Module             | Cluster Fill | Input Port Fill | Core Fill  | Output Port Fill | Internal Wire Color |
-|--------------------|-------------|-----------------|------------|------------------|---------------------|
-| **ctrl**           | `#EEEDFE`   | `#D8D5FA`       | `#CECBF6`  | `#B5B0EE`        | `#9993D6`           |
-| **memory_intf**    | `#FAECE7`   | `#F5D5CA`       | `#F5C4B3`  | `#E8A88E`        | `#C4856B`           |
-| **datapath**       | `#E1F5EE`   | `#C0EBDA`       | `#9FE1CB`  | `#7FD4B2`        | `#6BBF9E`           |
-| **fifo**           | `#FAEEDA`   | `#F5DEB8`       | `#FAC775`  | `#E8B45D`        | `#C49644`           |
-| **output_formatter** | `#FBEAF0` | `#F5D0DE`       | `#F4C0D1`  | `#E8A0B5`        | `#C4808E`           |
-
-**Rule**: For each module, define five related hex values progressing from lightest (cluster bg) to darkest (internal wire). The input port fill is one step darker than the cluster, the core is one step darker, the output port is one step darker, and the wire color is the darkest.
-
-### 4.2 External I/O
-
-| Element           | Fill        | Cluster Fill |
-|-------------------|-------------|-------------|
-| External input    | `#B5D4F4`   | `#E6F1FB`   |
-| External output   | `#C0DD97`   | `#EAF3DE`   |
-
-### 4.3 Top-level and Infrastructure
-
-| Element             | Color       | Usage |
-|---------------------|-------------|-------|
-| Top module cluster  | `#F1EFE8`   | fillcolor of `cluster_top` |
-| Cluster border      | `black`     | `color=black` on all clusters |
-| Clock bus wires     | `#4466AA`   | All edges in the clock daisy chain |
-| Reset bus wires     | `#AA4444`   | All edges in the reset daisy chain |
-| Bus relay nodes     | `black`     | `shape=point` fillcolor |
-
-### 4.4 Inter-Module Wire Colors
-
-| Wire(s)                          | Color       | Semantic |
-|----------------------------------|-------------|----------|
-| ctrl → memory_intf               | `#7B68EE`   | Control-to-memory (purple) |
-| ctrl → datapath (w_start)        | `#6A5ACD`   | Control-to-datapath (indigo) |
-| memory_intf → datapath           | `#CD853F`   | Memory-to-datapath (tan) |
-| datapath → fifo, datapath → of   | `#2E8B57`   | Datapath-to-downstream (green) |
-| output_formatter → fifo (backlink) | `#C71585` | Backward flow (magenta) |
-| fifo → output_formatter          | `#DAA520`   | FIFO-to-output (goldenrod) |
-
-**Rule**: Each inter-module path gets a unique color. Backward (feedback) links use a distinct warm/magenta tone.
-
-## 5. Typography Rules
-
-| Context                  | Font        | Size | Notes |
-|--------------------------|-------------|------|-------|
-| Graph/cluster labels     | Helvetica   | 14   | Only `cluster_top` overrides to 14; others inherit default 10 |
-| Core node labels         | Helvetica   | 10   | Default; two-line label with `\n` (e.g. `"ctrl\ncore"`) |
-| Port node labels         | Helvetica   | 8    | Explicitly set `fontsize=8` on every port node |
-| Edge xlabel              | Helvetica   | 8    | From edge default; used for wire net names |
-| External I/O labels      | Helvetica   | 10   | Default; bus widths shown as `signal[N:0]` |
-
-## 6. Structural Patterns
-
-### 6.1 Cluster Hierarchy (3 levels)
+Add these immediately inside the digraph:
 
 ```
-digraph top                          ← root graph (the chip/design)
-  └─ cluster_ext_in                  ← external input port group
-  └─ cluster_ext_out                 ← external output port group
-  └─ cluster_top                     ← top-level RTL module
-       ├─ cluster_ctrl               ← sub-module
-       ├─ cluster_memory_intf        ← sub-module
-       ├─ cluster_datapath           ← sub-module
-       ├─ cluster_fifo               ← sub-module
-       └─ cluster_output_formatter   ← sub-module
+rankdir=LR;
+splines=ortho;
+fontname="Helvetica";
+arrowType=tee;
+node [fontname="Helvetica", fontsize=10, style=filled, fillcolor=white];
+edge [fontname="Helvetica", fontsize=8, dir=none];
+compound=true;
+nodesep=0.4;
+ranksep=0.7;
 ```
 
-**Rule**: Every cluster name begins with `cluster_`. The top RTL module is always `cluster_top`. Sub-module clusters are `cluster_{module_name}`.
+---
 
-### 6.2 All Clusters Share This Boilerplate
+## EXTERNAL I/O PORTS
 
-```dot
-style=filled; color=black; fillcolor="<hex>";
+Build from `top_level_ports[]` in the structure JSON.
+
+cluster_ext_in — for every port where `direction == "input"`:
+```
+subgraph cluster_ext_in {{
+    label="External Inputs";
+    style=filled; color=black; fillcolor="#E6F1FB";
+    <port_name> [label="<label>", shape=Mdiamond, fillcolor="#B5D4F4",
+        width=<0.9 if int(port.width) > 1 else 0.7>, height=0.25];
+}}
 ```
 
-Sub-module clusters additionally include:
-```dot
-class="<type> <id> abstract_w1.25_h0.9 port_dir_LR";
-margin=12;
+cluster_ext_out — for every port where `direction == "output"`:
+```
+subgraph cluster_ext_out {{
+    label="External Outputs";
+    style=filled; color=black; fillcolor="#EAF3DE";
+    <port_name>_ext [label="<label>", shape=Msquare, fillcolor="#C0DD97",
+        width=<0.9 if int(port.width) > 1 else 0.7>, height=0.25];
+}}
 ```
 
-### 6.3 Subgraph Declaration Order = Dataflow Order
+Label formatting:
+- If `int(port.width) == 1`: label = port.name (e.g. `"clk"`)
+- If `int(port.width) > 1`: label = port.name + `[` + str(int(width)-1) + `:0]` (e.g. `"data_in[7:0]"`)
 
-Declare sub-module clusters in **signal-flow order** so Graphviz naturally places them left-to-right. In this file: ctrl → memory_intf → datapath → fifo → output_formatter.
+External output node IDs get an `_ext` suffix to avoid collision with internal signal names.
 
-### 6.4 Invisible Ordering Edges
+---
 
-To enforce linear left-to-right placement, add invisible edges between core nodes of adjacent modules:
+## SUB-MODULE CLUSTERS
 
-```dot
-ctrl_core -> mem_core  [style=invis, weight=10];
-mem_core  -> dp_core   [style=invis, weight=10];
-dp_core   -> fifo_core [style=invis, weight=10];
-fifo_core -> of_core   [style=invis, weight=10];
-```
+Build from `instances[]` in the structure JSON. Process them **in array order** —
+this order represents dataflow and controls left-to-right placement.
 
-**Rule**: `weight=10` on invisible edges; this is the highest weight in the file and overrides all other placement pressure.
-
-### 6.5 Bus Relay Nodes (Clock/Reset Distribution)
-
-To prevent global signals from routing through intermediate module clusters, use **daisy-chained point nodes** placed outside all sub-module clusters but inside `cluster_top`:
+Each instance becomes a `subgraph cluster_<module_type>` inside `cluster_top`:
 
 ```
-source → tap_mod1 → tap_mod2 → tap_mod3 → ...
-              ↓          ↓          ↓
-          mod1_in     mod2_in    mod3_in
+subgraph cluster_top {{
+    label="<module_name from JSON>";
+    style=filled; color=black; fillcolor="#F1EFE8"; fontsize=14;
+
+    // bus relay nodes go here (see BUS RELAY section)
+
+    subgraph cluster_<module_type> {{
+        label="<instance_name>  (<module_type>)";
+        style=filled; color=black; fillcolor="<FAMILY.CLUSTER>";
+        class="<func_type> <sort_order> abstract_w1.25_h0.9 port_dir_LR";
+        margin=12;
+
+        // input port nodes
+        // core node
+        // output port nodes
+        // internal dashed edges
+    }}
+}}
 ```
 
-Each relay node: `shape=point, width=0.06, fillcolor=black`.
+### Port direction inference
 
-**Trunk edges** (tap-to-tap): `weight=1` — allows flexible horizontal routing.
-**Tap edges** (tap-to-module-port): `weight=5` — pulls the tap node close to its target module.
+The `port_mapping` dict has no direction info. Determine direction for each port key:
 
-## 7. Naming Conventions
+1. If the mapped wire name matches a `top_level_ports` entry with `direction: "input"`,
+   or the port key matches a global signal name (clk, rst_n, rst, reset, scan_en,
+   test_mode), the port is an **input**.
+2. If the mapped wire name matches a `top_level_ports` entry with `direction: "output"`,
+   the port is an **output**.
+3. For internal wires: build a wire usage table across all instances. The single
+   instance that **drives** a wire (the source) has that port as an **output**.
+   All other instances connected to the same wire have it as an **input**.
+   Heuristic: if a wire name starts with `w_`, the instance whose port_mapping
+   key most closely matches the signal's base name (e.g. port `start` mapping to
+   `w_start`) is likely the driver.
+4. If still ambiguous, default to **input**.
 
-### 7.1 Node IDs
+### Input port nodes
 
-| Category          | Pattern                              | Example |
-|-------------------|--------------------------------------|---------|
-| Input port        | `{module}_in_{signal}`               | `ctrl_in_clk`, `dp_in_mem_data` |
-| Output port       | `{module}_out_{signal}`              | `ctrl_out_start`, `mem_out_mem_ack` |
-| Core logic        | `{module}_core`                      | `ctrl_core`, `fifo_core` |
-| External input    | `{signal}`                           | `clk`, `rst_n`, `data_in` |
-| External output   | `{signal}_ext`                       | `done_ext`, `result_ext` |
-| Clock relay       | `clk_tap_{module}`                   | `clk_tap_ctrl`, `clk_tap_dp` |
-| Reset relay       | `rst_tap_{module}`                   | `rst_tap_mem`, `rst_tap_of` |
-
-### 7.2 Cluster Labels
-
-Format: `"u_{instance}  ({module_type})"` — two spaces between instance and parenthetical.
-
-Examples: `"u_ctrl  (ctrl)"`, `"u_memory_intf  (memory_intf)"`.
-
-### 7.3 Wire Net Names (edge xlabels)
-
-Format: `"w_{signal}"` — the `w_` prefix denotes a wire/net.
-
-Examples: `"w_start"`, `"w_mem_req"`, `"w_fifo_dout"`.
-
-## 8. Hardware-Specific Conventions
-
-### 8.1 Node Shapes by Role
-
-| Shape        | Role                              |
-|--------------|-----------------------------------|
-| `Mdiamond`   | External input port (pad/pin)    |
-| `Msquare`    | External output port (pad/pin)   |
-| `box`        | Module-level I/O port (interface pin on a sub-block) |
-| `box3d`      | Core processing logic (the "guts" of a module) |
-| `point`      | Wire junction / bus tap relay     |
-
-### 8.2 Port Node Sizing
-
-| Port type              | `width` | `height` |
-|------------------------|---------|----------|
-| Single-bit signal      | `0.7`   | `0.25`   |
-| Bus signal (`[N:0]`)   | `0.9`   | `0.25`   |
-
-**Rule**: Any signal label containing `[` and `]` gets `width=0.9`. All others get `width=0.7`. Height is always `0.25`.
-
-### 8.3 Core Node Sizing
-
-Default: `width=1.0, height=0.6`. If the module name is long (e.g. `memory_intf`, `output_formatter`), increase width to `1.2` or `1.4` to fit the two-line label.
-
-### 8.4 Internal Module Wiring Style
-
-All edges **within** a module cluster (port → core, core → port) use:
-```dot
-style=dashed, color="<module_internal_wire_color>"
+For each input port in this instance:
+```
+<module_type>_in_<port_key> [label="<label>", shape=box, fillcolor="<FAMILY.INPUT_PORT>",
+    width=<0.9 if bus else 0.7>, height=0.25, fontsize=8, class="input port"];
 ```
 
-This visually distinguishes intra-module wiring from inter-module nets.
+### Core node
 
-### 8.5 Inter-Module Wiring Style
-
-All edges **between** module clusters use:
-- Solid style (default; no `style` attribute needed)
-- A unique `color` per source→destination pair (see §4.4)
-- `xlabel` for the wire net name (not `label`, due to ortho incompatibility)
-- `weight=3` for adjacent-module connections; `weight=2` for connections that skip a module
-
-### 8.6 Bus Width Annotation
-
-Bus widths are encoded in the port node **label** using Verilog-style bit-range notation: `signal[MSB:LSB]`.
-
-Examples: `data_in[7:0]`, `mem_addr[7:0]`, `cfg_mode[1:0]`.
-
-Single-bit signals have no range suffix.
-
-### 8.7 Backward / Feedback Links
-
-When a downstream module drives an upstream module (e.g. output_formatter's `rd_en` driving fifo's `rd_en` input), set:
-```dot
-dir=back, weight=0
+One per instance:
+```
+<module_type>_core [label="<module_type>\ncore", shape=box3d, fillcolor="<FAMILY.CORE>",
+    width=<1.0 if len≤10, 1.2 if 11-16, 1.4 if >16>, height=0.6];
 ```
 
-`dir=back` draws the arrowhead at the source end. `weight=0` tells Graphviz this edge should not influence rank placement (it opposes the dataflow direction).
+### Output port nodes
 
-### 8.8 `class` Attribute Metadata (Viewer Hints)
-
-The `class` attribute is not rendered by Graphviz but is preserved in SVG output for interactive viewers.
-
-**On clusters:**
+For each output port in this instance:
 ```
-class="<functional_type> <sort_order> abstract_w<W>_h<H> port_dir_LR"
+<module_type>_out_<port_key> [label="<label>", shape=box, fillcolor="<FAMILY.OUTPUT_PORT>",
+    width=<0.9 if bus else 0.7>, height=0.25, fontsize=8, class="output port"];
 ```
 
-| Token                  | Meaning |
-|------------------------|---------|
-| `<functional_type>`    | Semantic role: `control`, `memory`, `datapath`, `buffer`, `output` |
-| `<sort_order>`         | Numeric; controls collapsed-view ordering (1000, 2000, ...) |
-| `abstract_w1.25_h0.9` | When collapsed, render the abstract box at 1.25× width, 0.9× height vs. default |
-| `port_dir_LR`          | When collapsed, attach all wires on left (inputs) and right (outputs) only — never top/bottom |
+### Internal edges (within the cluster)
 
-**On port nodes:**
+All dashed, using the module's wire color:
 ```
-class="input port"   or   class="output port"
+<module_type>_in_<port> -> <module_type>_core [style=dashed, color="<FAMILY.WIRE>"];
+<module_type>_core -> <module_type>_out_<port> [style=dashed, color="<FAMILY.WIRE>"];
 ```
 
-**On inter-module edges:**
-```
-class="crosscluster port_exit_e port_entry_w"
-```
-Tells the viewer: source port exits east, destination port enters west.
+### StyleConfig overrides
 
-**On backward edges:**
+If `style_map.module_styles` contains a key matching `instance_name`:
+- `fillcolor` → replaces FAMILY.CLUSTER on the cluster
+- `color` → replaces `black` on the cluster border
+- `style` → replaces `filled` on the cluster
+- `shape` → replaces `box3d` on the core node
+
+---
+
+## BUS RELAY PATTERN
+
+For global signals that fan out to **3 or more** instances (typically clk, rst_n):
+
+1. Count how many instances have each wire name in their `port_mapping` values.
+2. For each global signal, create relay point nodes inside `cluster_top` but
+   outside all sub-module clusters:
+   ```
+   <signal>_tap_<module_type> [shape=point, width=0.06, fillcolor=black];
+   ```
+
+3. Wire as a daisy chain. Bus color lookup:
+   - Signal matches `clk*` → `#4466AA`
+   - Signal matches `rst*` or `reset*` → `#AA4444`
+   - Otherwise → `#666666`
+   - StyleConfig `wire_styles` override takes precedence.
+
+4. Edge pattern:
+   ```
+   // trunk (tap to tap): weight=1
+   <signal> -> <signal>_tap_<mod1> [color="<bus_color>", weight=1, class="bus <type>"];
+   <signal>_tap_<mod1> -> <signal>_tap_<mod2> [color="<bus_color>", weight=1, class="bus <type>"];
+
+   // taps (into each module): weight=5
+   <signal>_tap_<mod1> -> <mod1>_in_<signal> [color="<bus_color>", weight=5, class="bus <type> port_entry_w"];
+   ```
+
+Signals connecting to only 1–2 instances: wire directly, no relay nodes.
+
+---
+
+## INTER-MODULE EDGES
+
+Derived from shared wire names across `instances[].port_mapping`:
+
+When two instances both have a `port_mapping` value that matches the same
+`internal_wires[].name`, draw an edge from the source instance's output port
+to the destination instance's input port.
+
 ```
-class="crosscluster port_exit_w port_entry_e"
+<src_module>_out_<port> -> <dest_module>_in_<port> [xlabel="<wire_name>",
+    color="<wire_color>", weight=<3 if adjacent else 2>,
+    class="crosscluster port_exit_e port_entry_w"];
 ```
 
-**On bus edges:**
+### Wire color assignment
+
+Use this pool, cycling by unique (source→dest) pair index:
 ```
-class="bus clock"              (trunk segment)
-class="bus clock port_entry_w" (tap into module)
-class="bus reset"              (trunk segment)
-class="bus reset port_entry_w" (tap into module)
+#7B68EE  #6A5ACD  #CD853F  #2E8B57  #DAA520
+#4682B4  #D2691E  #5F9EA0  #BC8F8F  #6B8E23
+#9370DB  #E9967A  #20B2AA  #DB7093  #808000
 ```
+Assignment: pair_index % 15.
+
+StyleConfig `wire_styles` override: if the wire name has an entry, use its `color`
+and/or `style` instead.
+
+### Backward/feedback edges
+
+If the source instance has a **higher** index in `instances[]` than the destination
+(signal flows against dataflow order):
+```
+<src>_out_<port> -> <dest>_in_<port> [xlabel="<wire>", color="#C71585",
+    weight=0, dir=back, class="crosscluster port_exit_w port_entry_e"];
+```
+
+---
+
+## EXTERNAL I/O EDGES
+
+For each `top_level_port`, find which instance port_mapping value matches the port name:
+
+- Input: `<port_name> -> <module_type>_in_<port_key> [xlabel="w_<port_name>", weight=3, class="crosscluster port_exit_e port_entry_w"];`
+  (If destination module is not in the first two positions in instances[], use weight=2.)
+- Output: `<module_type>_out_<port_key> -> <port_name>_ext [xlabel="w_<port_name>", weight=<3 if source module is in the last two positions else 2>, class="crosscluster port_exit_e port_entry_w"];`
+
+---
+
+## INVISIBLE ORDERING EDGES
+
+Between every adjacent pair in `instances[]` array order. These edges must be
+placed **inside** `cluster_top` (after the last sub-module cluster, before the
+relay nodes):
+```
+<module_type_A>_core -> <module_type_B>_core [style=invis, weight=10];
+```
+
+---
+
+## PRECOMPUTED COLOR BANK
+
+Each instance gets a color family by its 0-based index in `instances[]`:
+family = `BANK[index % 16]`.
+
+```
+INDEX  CLUSTER     INPUT_PORT  CORE        OUTPUT_PORT  WIRE
+─────  ──────────  ──────────  ──────────  ───────────  ──────────
+ 0     #EEEDFE     #D8D5FA     #CECBF6     #B5B0EE      #9993D6
+ 1     #FAECE7     #F5D5CA     #F5C4B3     #E8A88E      #C4856B
+ 2     #E1F5EE     #C0EBDA     #9FE1CB     #7FD4B2      #6BBF9E
+ 3     #FAEEDA     #F5DEB8     #FAC775     #E8B45D      #C49644
+ 4     #FBEAF0     #F5D0DE     #F4C0D1     #E8A0B5      #C4808E
+ 5     #E6F0FA     #C4DCF5     #A3C8EF     #7AADE0      #5B93CC
+ 6     #F5EEE6     #E8D5C4     #DBBEA3     #C9A07A      #B0845C
+ 7     #E6F5F0     #C0E8DC     #99DBC8     #73CEB4      #55B89A
+ 8     #F0E6F5     #DCC4E8     #C8A3DB     #B47ACE      #9A5CB8
+ 9     #F5F0E6     #E8DCC4     #DBC8A3     #CEB47A      #B89A55
+10     #E6F5F5     #C4E8E8     #A3DBDB     #7ACECE      #5CB8B8
+11     #F5E6EA     #E8C4CC     #DBA3AE     #CE7A8E      #B85C6E
+12     #EAF5E6     #CCE8C4     #AEDBA3     #8ECE7A      #6EB85C
+13     #F0E6F0     #DCC4DC     #C8A3C8     #B47AB4      #9A5C9A
+14     #F5F5E6     #E8E8C4     #DBDBA3     #CECE7A      #B8B85C
+15     #E6EAF5     #C4CCE8     #A3AEDB     #7A8ECE      #5C6EB8
+```
+
+StyleConfig `module_styles` overrides replace the corresponding family value
+for that specific instance.
+
+---
+
+## CLASS ATTRIBUTE REFERENCE
+
+These are not rendered by Graphviz but are preserved in SVG output for
+interactive viewers that support collapse/expand.
+
+### On sub-module clusters:
+```
+class="<func_type> <sort_order> abstract_w<W>_h<H> port_dir_LR"
+```
+
+func_type inference from module_type string:
+- Contains ctrl/fsm/state → `control`
+- Contains mem/ram/rom/cache → `memory`
+- Contains fifo/buf/queue → `buffer`
+- Contains data/alu/mul/div/add → `datapath`
+- Contains fmt/out/tx/encode → `output`
+- Contains dec/rx/in → `input`
+- Contains clk/pll/osc → `clock`
+- Contains arb/mux/switch → `arbiter`
+- Otherwise → `logic`
+
+sort_order = (instance_index + 1) * 1000
+
+abstract size from total port count in port_mapping:
+- ≤ 10 ports: `abstract_w1.25_h0.9`
+- 11–20 ports: `abstract_w1.5_h0.9`
+- \> 20 ports: `abstract_w2.0_h1.2`
+
+### On port nodes:
+```
+class="input port"
+class="output port"
+```
+
+### On inter-module edges:
+```
+class="crosscluster port_exit_e port_entry_w"   // forward
+class="crosscluster port_exit_w port_entry_e"   // backward
+```
+
+### On bus edges:
+```
+class="bus clock"                // trunk
+class="bus clock port_entry_w"   // tap
+class="bus reset"                // trunk
+class="bus reset port_entry_w"   // tap
+```
+
+---
+
+## VALIDATION
+
+Before returning, verify:
+- No edge uses `label`. All wire names use `xlabel`.
+- Every instance produced exactly one *_core node with shape=box3d.
+- Every port node has class="input port" or class="output port".
+- Global signals (3+ fanout) use the relay pattern.
+- Bus port labels show [N-1:0] not [N:0] for multi-bit signals.
+- The digraph name matches module_name from the structure JSON.
+- StyleConfig overrides are applied where present.
