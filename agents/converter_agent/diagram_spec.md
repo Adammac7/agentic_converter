@@ -41,15 +41,25 @@ STYLE MAP:
 Add these immediately inside the digraph:
 
 ```
-rankdir=LR;
-splines=ortho;
-fontname="Helvetica";
-arrowType=tee;
+graph [rankdir=LR, splines=ortho, fontname="Helvetica", compound=true, nodesep=0.4, ranksep=0.7];
 node [fontname="Helvetica", fontsize=10, style=filled, fillcolor=white];
-edge [fontname="Helvetica", fontsize=8, dir=none];
-compound=true;
-nodesep=0.4;
-ranksep=0.7;
+edge [fontname="Helvetica", fontsize=8, dir=none, arrowhead=tee];
+```
+
+### DOT syntax guardrail (critical)
+
+`graph`, `node`, and `edge` default attributes MUST be emitted as three separate statements.
+
+Valid:
+```
+graph [rankdir=LR, splines=ortho];
+node [fontname="Helvetica", fontsize=10];
+edge [fontname="Helvetica", fontsize=8];
+```
+
+Invalid (never do this):
+```
+graph [rankdir=LR, node [fontname="Helvetica"], edge [fontsize=8]];
 ```
 
 ---
@@ -354,3 +364,9 @@ Before returning, verify:
 - Bus port labels show [N-1:0] not [N:0] for multi-bit signals.
 - The digraph name matches module_name from the structure JSON.
 - StyleConfig overrides are applied where present.
+- DOT parses cleanly with no syntax errors.
+- The first non-empty statements inside `digraph ... {{` are exactly:
+  1) `graph [...]`
+  2) `node [...]`
+  3) `edge [...]`
+- `graph [...]` does not contain nested `node [...]` or `edge [...]` blocks.

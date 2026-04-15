@@ -3,21 +3,40 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+
 load_dotenv()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+# Determine if we should use the free Gemini tier or the paid OpenAI tier
+USE_GEMINI = os.getenv("USE_GEMINI").lower() == "true"
+
+if USE_GEMINI:
+    MODEL_NAME = os.getenv("GOOGLE_MODEL")
+    API_KEY = os.getenv("GOOGLE_API_KEY")
+else:
+    MODEL_NAME = os.getenv("OPENAI_MODEL")
+    API_KEY = os.getenv("OPENAI_API_KEY")
 
 _PROMPTS_FILE = Path(__file__).parent / "prompts.md"
+_DIAGRAM_SPEC_FILE = Path(__file__).parent / "diagram_spec.md"
 
-
-def load_prompt(section: str, **kwargs) -> str:
+def load_prompt(file_path: str, section: str, **kwargs) -> str:
     """
-    Reads a named section from prompts.md and injects keyword arguments.
+    Reads a named section from a markdown file and injects keyword arguments.
 
     Sections are delimited by '# <Name>' headers. The text between the
     requested header and the next header (or end-of-file) is extracted,
     then .format(**kwargs) is called to fill in any {placeholders}.
+
+    Args:
+        file_path: Path to the markdown file
+        section:   The '# Header' name to extract (without the '# ')
+        **kwargs:  Placeholder values to inject via .format()
     """
-    text = _PROMPTS_FILE.read_text(encoding="utf-8")
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = f.read()
+
     parts = {}
     current_key = None
     for line in text.splitlines(keepends=True):
@@ -29,7 +48,7 @@ def load_prompt(section: str, **kwargs) -> str:
 
     if section not in parts:
         raise KeyError(
-            f"Section '{section}' not found in {_PROMPTS_FILE}. "
+            f"Section '{section}' not found in {file_path}. "
             f"Available: {list(parts.keys())}"
         )
 
@@ -53,3 +72,18 @@ def _log(text: str = "") -> None:
 
 def _sep(char: str = "=", width: int = 60, color: str = "") -> None:
     _log(f"{color}{char * width}{RESET}")
+
+
+def get_llm(temperature=0):
+    if USE_GEMINI:
+        return ChatGoogleGenerativeAI(
+            model=MODEL_NAME,
+            google_api_key=API_KEY,
+            temperature=temperature
+        )
+    else:
+        return ChatOpenAI(
+            model=MODEL_NAME, 
+            openai_api_key=API_KEY,
+            temperature=temperature
+        )
