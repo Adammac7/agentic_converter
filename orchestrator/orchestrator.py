@@ -50,7 +50,7 @@ def rtl_to_json_to_dot(state: PipelineState) -> dict:
 
     # Step 1 & 2 — Architect / Auditor retry loop
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f"[rtl_to_json_to_dot] Attempt {attempt}/{MAX_ATTEMPTS}")
+        print(f"[rtl_to_json] Attempt {attempt}/{MAX_ATTEMPTS}")
 
         try:
             architect_result = run_architect_agent(state["rtl_code"], feedback=feedback)

@@ -69,7 +69,7 @@ function DiagramReviewContent() {
   const taskId    = params.get("task_id") ?? "";
   const initialImgUrl = params.get("img_url") ?? "";
 
-  // img_url is the full URL (e.g. http://localhost:8000/static/output/<id>.svg)
+  // img_url is a full backend URL (e.g. http://localhost:8000/static/output/<id>.svg)
   // built by the upload page so we can drop it straight into <img src>.
   const [imgSrc,         setImgSrc]         = useState(initialImgUrl);
   const [imgLoadError,   setImgLoadError]   = useState(false);
@@ -92,7 +92,7 @@ function DiagramReviewContent() {
     setRegenError("");
 
     try {
-      const res = await fetch(`/backend/regenerate/${currentTaskId}`, {
+      const res = await fetch(`http://localhost:8000/regenerate/${currentTaskId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ edit_prompt: feedback }),
@@ -184,6 +184,27 @@ function DiagramReviewContent() {
               <div className="flex flex-col items-center justify-center gap-3 min-h-[320px] rounded-xl border-2 border-dashed border-gray-200 bg-gray-50">
                 <SpinnerIcon className="h-8 w-8 text-[#FF8200] animate-spin" />
                 <p className="text-sm text-gray-400">Loading diagram&hellip;</p>
+              </div>
+            )}
+
+            {imgSrc && !imgLoadError && (
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <a
+                  href={imgSrc}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium text-[#002D54] underline decoration-[#FF8200] underline-offset-2 hover:text-[#FF8200]"
+                >
+                  Open diagram in new tab
+                </a>
+                <a
+                  href={`/viewer.html?task_id=${encodeURIComponent(currentTaskId)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium text-[#002D54] underline decoration-[#FF8200] underline-offset-2 hover:text-[#FF8200]"
+                >
+                  Open interactive viewer
+                </a>
               </div>
             )}
           </section>

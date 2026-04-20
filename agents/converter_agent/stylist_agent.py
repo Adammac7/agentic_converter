@@ -1,5 +1,4 @@
-from langchain_openai import ChatOpenAI
-from .config import OPENAI_MODEL, load_prompt
+from .config import load_prompt, get_llm, _PROMPTS_FILE
 from .tools.style_schema import StyleConfig, ComponentStyle
 
 
@@ -14,9 +13,10 @@ def run_stylist_agent(architect_json: str, user_request: str) -> StyleConfig:
     to the specific components in the Architect's JSON.
     Returns a StyleConfig Pydantic object.
     """
-    llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
-    stylist = llm.with_structured_output(StyleConfig, method="function_calling")
-    prompt = load_prompt("Stylist Prompt", architect_json=architect_json, user_request=user_request)
+    llm = get_llm(temperature=0)
+    #stylist = llm.with_structured_output(StyleConfig, method="function_calling")
+    stylist = llm.with_structured_output(StyleConfig)
+    prompt = load_prompt(_PROMPTS_FILE, "Stylist Prompt", architect_json=architect_json, user_request=user_request)
     result = stylist.invoke(prompt)
 
     # Sanitize keys in case the LLM wrapped them in extra quotes/whitespace
