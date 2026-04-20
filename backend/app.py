@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 _HERE       = Path(__file__).parent                        # backend/
 _ROOT       = _HERE.parent                                 # project root
-RAW_DIR     = _ROOT / "agents" / "converter_agent" / "data" / "raw"
+RAW_DIR     = _ROOT / "data" / "raw"
 OUTPUT_DIR  = _HERE / "static" / "output"
 
 RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -90,7 +90,7 @@ async def upload_rtl(
 ):
     """
     1. Validate file extension.
-    2. Save the upload to agents/converter_agent/data/raw/ using shutil.
+    2. Save the upload to data/raw/ using shutil.
     3. Run the agentic pipeline in a thread (it is synchronous/blocking).
     4. Persist the resulting SVG and return its URL.
     """
@@ -187,8 +187,8 @@ async def regenerate(task_id: str, body: RegenerateRequest):
         raise HTTPException(status_code=404, detail="Task not found.")
 
     # These imports are read-only — we never modify files inside agents/.
-    from agents.converter_agent.stylist_agent      import run_stylist_agent
-    from agents.converter_agent.dot_compiler_agent import run_dot_compiler_agent
+    from agents.stylist.agent import run_stylist_agent
+    from agents.dot_compiler.agent import run_dot_compiler_agent
     from tools.graphviz_quickchart                 import render_dot_to_svg
 
     verified_json = task["verified_json"]
