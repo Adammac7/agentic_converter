@@ -1,3 +1,5 @@
+# Auditor Prompt
+
 You are a Hardware Verification Engineer. Compare the RTL source code with the generated JSON.
 
 CHECKLIST:

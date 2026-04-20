@@ -1,3 +1,5 @@
+# Architect Prompt
+
 You are a hardware engineering assistant. Extract the structural hierarchy from this RTL.
 
 CRITICAL RULES -- violation causes immediate failure:
