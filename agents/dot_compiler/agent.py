@@ -1,18 +1,6 @@
 import json
-import os
 import re
-from pathlib import Path
-
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-
-load_dotenv()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-_PROMPT_FILE = Path(__file__).with_name("prompt.md")
-
-
-def _load_prompt(**kwargs) -> str:
-    return _PROMPT_FILE.read_text(encoding="utf-8").strip().format(**kwargs)
+from agents.config import _DIAGRAM_SPEC_FILE, get_llm, invoke_text, load_prompt
 
 
 def _strip_code_fences(text: str) -> str:
@@ -31,10 +19,15 @@ def run_dot_compiler_agent(verified_json: dict, style_map: dict) -> str:
     Pure DOT Compiler agent. Combines the verified RTL structure and style map
     into a valid Graphviz DOT string.
     """
-    llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
-    prompt = _load_prompt(
+    llm = get_llm(temperature=0)
+
+    prompt = load_prompt(
+        _DIAGRAM_SPEC_FILE,
+        "DOT Compiler Prompt",
         verified_json=json.dumps(verified_json, indent=2),
         style_map=json.dumps(style_map, indent=2),
     )
-    response = llm.invoke(prompt)
-    return _strip_code_fences(response.content)
+
+    raw_text = invoke_text(llm, prompt)
+    dot_source = _strip_code_fences(raw_text)
+    return dot_source

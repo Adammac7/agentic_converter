@@ -1,18 +1,5 @@
-import os
-from pathlib import Path
-
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-
+from agents.config import _PROMPTS_FILE, get_llm, load_prompt
 from .schema import StyleConfig
-
-load_dotenv()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-_PROMPT_FILE = Path(__file__).with_name("prompt.md")
-
-
-def _load_prompt(**kwargs) -> str:
-    return _PROMPT_FILE.read_text(encoding="utf-8").strip().format(**kwargs)
 
 
 def run_stylist_agent(architect_json: str, user_request: str) -> StyleConfig:
@@ -21,9 +8,14 @@ def run_stylist_agent(architect_json: str, user_request: str) -> StyleConfig:
     to the specific components in the Architect's JSON.
     Returns a StyleConfig Pydantic object.
     """
-    llm = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
-    stylist = llm.with_structured_output(StyleConfig, method="function_calling")
-    prompt = _load_prompt(architect_json=architect_json, user_request=user_request)
+    llm = get_llm(temperature=0)
+    stylist = llm.with_structured_output(StyleConfig)
+    prompt = load_prompt(
+        _PROMPTS_FILE,
+        "Stylist Prompt",
+        architect_json=architect_json,
+        user_request=user_request,
+    )
     result = stylist.invoke(prompt)
 
     clean_module_styles = {

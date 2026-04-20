@@ -22,9 +22,9 @@ GET /static/output/<task_id>.svg
 """
 
 import asyncio
-import json
 import logging
 import shutil
+import tempfile
 import traceback
 import uuid
 from pathlib import Path
@@ -42,10 +42,14 @@ logger = logging.getLogger(__name__)
 
 # ── Paths (relative to project root, where uvicorn is launched) ───────────────
 
-_HERE       = Path(__file__).parent                        # backend/
-_ROOT       = _HERE.parent                                 # project root
-RAW_DIR     = _ROOT / "data" / "raw"
-OUTPUT_DIR  = _HERE / "static" / "output"
+_HERE = Path(__file__).parent  # backend/
+_ROOT = _HERE.parent  # project root
+
+# Runtime artifacts should live outside the repo so uvicorn --reload does not
+# restart the server while handling uploads/regenerations.
+_RUNTIME_DIR = Path(tempfile.gettempdir()) / "agentic_converter_runtime"
+RAW_DIR = _RUNTIME_DIR / "raw"
+OUTPUT_DIR = _RUNTIME_DIR / "output"
 
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,6 +83,26 @@ def _save_svg(task_id: str, svg_text: str) -> str:
     """Persist SVG to disk; return its public URL path."""
     (OUTPUT_DIR / f"{task_id}.svg").write_text(svg_text, encoding="utf-8")
     return f"/static/output/{task_id}.svg"
+
+
+def _merge_style_intent(previous: str, new_edit: str) -> str:
+    """
+    Build a cumulative style prompt from previous intent + latest edit.
+    Latest instruction should win only when it conflicts with older ones.
+    """
+    prev = (previous or "").strip()
+    edit = (new_edit or "").strip()
+    if not edit:
+        return prev
+    if not prev:
+        return edit
+
+    return (
+        "Apply these styling instructions cumulatively.\n"
+        "Keep earlier constraints unless a newer instruction explicitly conflicts.\n\n"
+        f"Existing style intent:\n{prev}\n\n"
+        f"Latest user edit:\n{edit}"
+    )
 
 
 # ── POST /upload-rtl ──────────────────────────────────────────────────────────
@@ -152,14 +176,15 @@ async def upload_rtl(
             detail=f"Pipeline error: {type(exc).__name__}: {exc}",
         ) from exc
 
-    # Store state for fast regeneration (avoids re-running Architect/Auditor).
+    # Store state for subsequent regenerations.
     _tasks[task_id] = {
-        "rtl_code":           rtl_code,
+        "rtl_code": rtl_code,
         "customization_text": customization_text,
-        "verified_json":      final["verified_json"],
-        "style_map":          final["style_map"],
-        "dot_source":         final["dot_source"],
-        "svg_url":            svg_url,
+        "cumulative_style_prompt": (customization_text or "").strip(),
+        "verified_json": final["verified_json"],
+        "style_map": final["style_map"],
+        "dot_source": final["dot_source"],
+        "svg_url": svg_url,
     }
 
     return JSONResponse(
@@ -177,37 +202,35 @@ class RegenerateRequest(BaseModel):
 @app.post("/regenerate/{task_id}")
 async def regenerate(task_id: str, body: RegenerateRequest):
     """
-    Re-style an existing diagram using the stored verified_json.
-    Only Stylist → DOT Compiler → Graphviz render are executed;
-    the expensive Architect/Auditor loop is skipped entirely.
+    Re-run the full orchestrator for an existing RTL input, including
+    the Architect/Auditor loop. The latest edit is merged into a cumulative
+    style prompt so prior edits are preserved unless explicitly overridden.
     Returns a new { task_id, svg_url }.
     """
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
 
-    # These imports are read-only — we never modify files inside agents/.
-    from agents.stylist.agent import run_stylist_agent
-    from agents.dot_compiler.agent import run_dot_compiler_agent
-    from tools.graphviz_quickchart                 import render_dot_to_svg
-
-    verified_json = task["verified_json"]
-    edit_prompt   = body.edit_prompt
-
-    def _regen() -> tuple[dict, str, str]:
-        style_result = run_stylist_agent(
-            architect_json=json.dumps(verified_json, indent=2),
-            user_request=edit_prompt,
-        )
-        dot_source = run_dot_compiler_agent(verified_json, style_result.model_dump())
-        svg        = render_dot_to_svg(dot_source)
-        return style_result.model_dump(), dot_source, svg
+    rtl_code = task["rtl_code"]
+    cumulative_style_prompt = task.get("cumulative_style_prompt")
+    if cumulative_style_prompt is None:
+        cumulative_style_prompt = task.get("customization_text", "")
+    edit_prompt = body.edit_prompt
+    merged_style_prompt = _merge_style_intent(cumulative_style_prompt, edit_prompt)
 
     try:
         logger.info("Regenerating from task %s", task_id)
-        style_map, dot_source, svg = await asyncio.to_thread(_regen)
+        final = await asyncio.to_thread(
+            run_pipeline,
+            rtl_code,
+            merged_style_prompt,
+            "",
+        )
+        style_map = final.get("style_map")
+        dot_source = final.get("dot_source")
+        svg = final.get("svg_output")
 
-        if not svg:
+        if not svg or not style_map or not dot_source:
             raise ValueError("Regeneration produced no SVG output.")
 
         new_task_id = str(uuid.uuid4())
@@ -227,7 +250,13 @@ async def regenerate(task_id: str, body: RegenerateRequest):
             detail=f"Regeneration error: {type(exc).__name__}: {exc}",
         ) from exc
 
-    _tasks[new_task_id] = {**task, "style_map": style_map, "dot_source": dot_source, "svg_url": svg_url}
+    _tasks[new_task_id] = {
+        **task,
+        "cumulative_style_prompt": merged_style_prompt,
+        "style_map": style_map,
+        "dot_source": dot_source,
+        "svg_url": svg_url,
+    }
 
     return JSONResponse(
         content={"task_id": new_task_id, "svg_url": svg_url},
@@ -235,6 +264,26 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     )
 
 
+@app.get("/task/{task_id}/dot")
+async def get_task_dot(task_id: str):
+    """
+    Return DOT source for a task so the interactive viewer can render/collapse
+    clusters client-side.
+    """
+    task = _tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    dot_source = task.get("dot_source")
+    if not dot_source:
+        raise HTTPException(status_code=404, detail="DOT source not found for task.")
+
+    return JSONResponse(
+        content={"task_id": task_id, "dot_source": dot_source},
+        media_type="application/json",
+    )
+
+
 # ── Static files (mounted last so API routes are never shadowed) ──────────────
-# Serves backend/static/ at /static → diagrams at /static/output/<id>.svg
-app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
+# Serves runtime output at /static/output/<id>.svg
+app.mount("/static", StaticFiles(directory=str(_RUNTIME_DIR)), name="static")

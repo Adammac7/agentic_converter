@@ -169,7 +169,7 @@ export default function Page() {
       body.append("rtl_file", form.file);
       body.append("customization_text", form.customizationText);
 
-      const res = await fetch("/backend/upload-rtl", { method: "POST", body });
+      const res = await fetch("http://localhost:8000/upload-rtl", { method: "POST", body });
 
       // Read the body ONCE as text, then parse — avoids "body stream already
       // read" that occurs when res.json() throws and a catch calls res.text().
@@ -189,8 +189,6 @@ export default function Page() {
       const { task_id, svg_url }: { task_id: string; svg_url: string } =
         JSON.parse(rawText);
 
-      // Build the full image URL so the diagram-review page can use it
-      // directly in an <img> src without an extra fetch.
       const imgUrl = `http://localhost:8000${svg_url}`;
 
       router.push(
