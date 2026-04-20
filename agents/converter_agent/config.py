@@ -87,3 +87,33 @@ def get_llm(temperature=0):
             openai_api_key=API_KEY,
             temperature=temperature
         )
+
+
+def _normalize_llm_content(raw) -> str:
+    """
+    Normalize provider-specific message content into plain text.
+    LangChain chat models may return either a string or a list of parts.
+    """
+    if isinstance(raw, str):
+        return raw
+
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for part in raw:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(str(part.get("text", "")))
+            else:
+                parts.append(str(part))
+        return "".join(parts)
+
+    return str(raw)
+
+
+def invoke_text(llm, prompt: str) -> str:
+    """
+    Invoke an LLM and always return normalized text content.
+    """
+    response = llm.invoke(prompt)
+    return _normalize_llm_content(getattr(response, "content", response))
