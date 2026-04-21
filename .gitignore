@@ -11,3 +11,6 @@ __pycache__/
 *.pyc
 
 CLAUDE.md
+.claude/
+
+/backend/static/output/

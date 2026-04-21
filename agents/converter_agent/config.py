@@ -8,10 +8,15 @@ from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
-# Determine if we should use the free Gemini tier or the paid OpenAI tier
-USE_GEMINI = os.getenv("USE_GEMINI").lower() == "true"
+# Provider selection. Claude takes priority if USE_CLAUDE=true, otherwise
+# USE_GEMINI chooses between Gemini and OpenAI.
+USE_CLAUDE = (os.getenv("USE_CLAUDE") or "").lower() == "true"
+USE_GEMINI = (os.getenv("USE_GEMINI") or "").lower() == "true"
 
-if USE_GEMINI:
+if USE_CLAUDE:
+    MODEL_NAME = os.getenv("ANTHROPIC_MODEL")
+    API_KEY = os.getenv("ANTHROPIC_API_KEY")
+elif USE_GEMINI:
     MODEL_NAME = os.getenv("GOOGLE_MODEL")
     API_KEY = os.getenv("GOOGLE_API_KEY")
 else:
@@ -75,15 +80,21 @@ def _sep(char: str = "=", width: int = 60, color: str = "") -> None:
 
 
 def get_llm(temperature=0):
+    if USE_CLAUDE:
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(
+            model=MODEL_NAME,
+            api_key=API_KEY,
+            temperature=temperature,
+        )
     if USE_GEMINI:
         return ChatGoogleGenerativeAI(
             model=MODEL_NAME,
             google_api_key=API_KEY,
             temperature=temperature
         )
-    else:
-        return ChatOpenAI(
-            model=MODEL_NAME, 
-            openai_api_key=API_KEY,
-            temperature=temperature
-        )
+    return ChatOpenAI(
+        model=MODEL_NAME,
+        openai_api_key=API_KEY,
+        temperature=temperature
+    )

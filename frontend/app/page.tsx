@@ -169,7 +169,16 @@ export default function Page() {
       body.append("rtl_file", form.file);
       body.append("customization_text", form.customizationText);
 
-      const res = await fetch("http://localhost:8000/upload-rtl", { method: "POST", body });
+      const res = await fetch("http://localhost:8000/upload-rtl", {
+        method: "POST",
+        body,
+        credentials: "include",  // send session cookie so the backend knows the user
+      });
+
+      if (res.status === 401) {
+        window.location.href = "http://localhost:8000/auth/login";
+        return;
+      }
 
       // Read the body ONCE as text, then parse — avoids "body stream already
       // read" that occurs when res.json() throws and a catch calls res.text().
@@ -186,13 +195,15 @@ export default function Page() {
         throw new Error(message);
       }
 
-      const { task_id, svg_url }: { task_id: string; svg_url: string } =
-        JSON.parse(rawText);
+      const { task_id, session_id, svg_url }:
+        { task_id: string; session_id: string; svg_url: string } = JSON.parse(rawText);
 
       const imgUrl = `http://localhost:8000${svg_url}`;
 
       router.push(
-        `/diagram-review?task_id=${encodeURIComponent(task_id)}&img_url=${encodeURIComponent(imgUrl)}`
+        `/diagram-review?task_id=${encodeURIComponent(task_id)}` +
+        `&session_id=${encodeURIComponent(session_id)}` +
+        `&img_url=${encodeURIComponent(imgUrl)}`
       );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Unexpected error.");

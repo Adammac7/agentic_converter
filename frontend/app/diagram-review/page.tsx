@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -67,6 +67,7 @@ function RefineIcon({ className }: { className?: string }) {
 function DiagramReviewContent() {
   const params    = useSearchParams();
   const taskId    = params.get("task_id") ?? "";
+  const sessionId = params.get("session_id") ?? taskId;  // first upload: session == task
   const initialImgUrl = params.get("img_url") ?? "";
 
   // img_url is a full backend URL (e.g. http://localhost:8000/static/output/<id>.svg)
@@ -74,14 +75,43 @@ function DiagramReviewContent() {
   const [imgSrc,         setImgSrc]         = useState(initialImgUrl);
   const [imgLoadError,   setImgLoadError]   = useState(false);
 
-  // Regeneration form
+  // Regeneration form — seeded from the persisted per-thread notes so the
+  // user can edit on each run (see effect below).
   const [feedback,       setFeedback]       = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError,     setRegenError]     = useState("");
 
   // Current task id (updated after each regeneration so future regen calls
-  // are chained against the most-recent task's stored state).
+  // are chained against the most-recent task's stored state). session_id
+  // stays fixed — it's the LangGraph thread key for memory/notes.
   const [currentTaskId, setCurrentTaskId] = useState(taskId);
+
+  // On mount, pull the persisted notes for this thread and prefill the
+  // textarea. 401 → not authenticated, send the user to Google OAuth.
+  // 404 → the session does not belong to this user (or was wiped); leave
+  // the textarea blank rather than surfacing a scary error.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `http://localhost:8000/session/${encodeURIComponent(sessionId)}/notes`,
+          { credentials: "include" },
+        );
+        if (res.status === 401) {
+          window.location.href = "http://localhost:8000/auth/login";
+          return;
+        }
+        if (!res.ok) return;
+        const { notes }: { notes: string } = await res.json();
+        if (!cancelled) setFeedback(notes);
+      } catch {
+        // silently fall through — a blank textarea is fine
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   // ── Regenerate handler ────────────────────────────────────────────────────
 
@@ -95,8 +125,14 @@ function DiagramReviewContent() {
       const res = await fetch(`http://localhost:8000/regenerate/${currentTaskId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ edit_prompt: feedback }),
       });
+
+      if (res.status === 401) {
+        window.location.href = "http://localhost:8000/auth/login";
+        return;
+      }
 
       // Read body ONCE — avoids "body stream already read" if JSON parse fails.
       const rawText = await res.text();
@@ -118,7 +154,9 @@ function DiagramReviewContent() {
       setCurrentTaskId(task_id);
       setImgSrc(`http://localhost:8000${svg_url}`);
       setImgLoadError(false);
-      setFeedback("");
+      // Keep the textarea filled with what the user just submitted — they
+      // can tweak and resubmit without re-typing. Notes are persisted on
+      // the server under session_id so a page reload restores them too.
     } catch (err) {
       setRegenError(err instanceof Error ? err.message : "Unexpected error.");
     } finally {
