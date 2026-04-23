@@ -365,7 +365,7 @@ Before returning, verify:
 - The digraph name matches module_name from the structure JSON.
 - StyleConfig overrides are applied where present.
 - DOT parses cleanly with no syntax errors.
-- The first non-empty statements inside `digraph ... {` are exactly:
+- The first non-empty statements inside `digraph ... {{` are exactly:
   1) `graph [...]`
   2) `node [...]`
   3) `edge [...]`
