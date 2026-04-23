@@ -1,4 +1,4 @@
-from agents.config import _PROMPTS_FILE, get_llm, load_prompt
+from agents.config import _STYLIST_PROMPT_FILE, get_llm, load_prompt
 from .schema import StyleConfig
 
 
@@ -11,7 +11,7 @@ def run_stylist_agent(architect_json: str, user_request: str) -> StyleConfig:
     llm = get_llm(temperature=0)
     stylist = llm.with_structured_output(StyleConfig)
     prompt = load_prompt(
-        _PROMPTS_FILE,
+        _STYLIST_PROMPT_FILE,
         "Stylist Prompt",
         architect_json=architect_json,
         user_request=user_request,

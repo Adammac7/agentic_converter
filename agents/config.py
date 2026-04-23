@@ -18,8 +18,10 @@ else:
     MODEL_NAME = os.getenv("OPENAI_MODEL")
     API_KEY = os.getenv("OPENAI_API_KEY")
 
-_PROMPTS_FILE = Path(__file__).parent / "prompts.md"
-_DIAGRAM_SPEC_FILE = Path(__file__).parent / "diagram_spec.md"
+_ARCHITECT_PROMPT_FILE = Path(__file__).parent / "architect" / "prompt.md"
+_AUDITOR_PROMPT_FILE   = Path(__file__).parent / "auditor"   / "prompt.md"
+_STYLIST_PROMPT_FILE   = Path(__file__).parent / "stylist"   / "prompt.md"
+_DIAGRAM_SPEC_FILE     = Path(__file__).parent / "dot_compiler" / "prompt.md"
 
 def load_prompt(file_path: str, section: str, **kwargs) -> str:
     """

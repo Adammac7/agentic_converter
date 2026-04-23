@@ -1,113 +1,183 @@
 # Agentic Converter
 
-RTL → Diagram pipeline powered by an agentic LLM system (Architect → Auditor → Stylist → DOT Compiler).
+Convert SystemVerilog RTL into architecture diagrams using a multi-agent LLM pipeline:
+
+**Architect -> Auditor -> Stylist -> DOT Compiler -> QuickChart (SVG)**
+
+---
+
+## What It Does
+
+- Accepts RTL source (`.sv`, `.v`, `.svh`, `.vh`) plus optional style instructions
+- Extracts a structured representation of modules/ports/instances
+- Audits structure quality with retry-on-failure (up to 3 attempts)
+- Applies style intent and compiles Graphviz DOT
+- Renders final SVG via QuickChart and serves it through FastAPI
+- Supports iterative regeneration with cumulative style edits
 
 ---
 
 ## Setup
 
-```
+Install Python dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env` and add your API key:
+Set up environment variables:
+
+```bash
+cp .env.example .env
 ```
+
+Then edit `.env`:
+
+```env
 GOOGLE_API_KEY="your_key_here"
 GOOGLE_MODEL=gemini-2.5-flash
 USE_GEMINI=True
+
+# Optional OpenAI fallback when USE_GEMINI=False
+OPENAI_API_KEY="your_openai_key_here"
+OPENAI_MODEL="gpt-4o-mini"
 ```
+
+> Note: the template file is currently named `.env.example` in this repository.
 
 ---
 
-## Running the app
+## Running the App
 
-Run both servers from the **project root**.
+Run both services from the project root.
 
-**Backend** (FastAPI on port 8000):
-```
-uvicorn backend.app:app --reload --port 8000
+Backend (`FastAPI`, port `8000`):
+
+```bash
+uv run uvicorn backend.app:app --reload --port 8000
 ```
 
-**Frontend** (Next.js on port 3000):
-```
+Frontend (`Next.js`, port `3000`):
+
+```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Running the pipeline directly
+## API Endpoints
 
-```
-python -m orchestrator.orchestrator
-```
-
-Reads `agents/converter_agent/data/raw/top.sv` and writes `output.svg` to the project root.
-
----
-
-## Tests
-
-```
-python -m pytest tests/ -v              # fast tests (default)
-python -m pytest tests/ -v -s -m slow  # LLM self-correction tests (requires API key)
-```
-
-See [tests/README.md](tests/README.md) for the full test guide.
+- `POST /upload-rtl`
+  - Multipart form: `rtl_file` + optional `customization_text`
+  - Runs full pipeline and returns `{ task_id, svg_url }`
+- `POST /regenerate/{task_id}`
+  - JSON body: `{ "edit_prompt": "..." }`
+  - Regenerates diagram from prior task with cumulative style intent
+  - Returns a new `{ task_id, svg_url }`
+- `GET /task/{task_id}/dot`
+  - Returns DOT source for interactive viewer usage
+- `GET /static/output/{task_id}.svg`
+  - Serves generated SVG assets
 
 ---
 
-## Architecture
+## Pipeline Flow
 
+```text
+Upload RTL + optional style request
+              |
+              v
+Architect: RTL -> RTLStructure JSON
+              |
+              v
+Auditor: validate JSON vs RTL
+    | valid                     | invalid
+    v                           v
+continue                 feedback -> Architect retry (max 3)
+              |
+              v
+Stylist: user prompt -> StyleConfig
+              |
+              v
+DOT Compiler: verified_json + style_map -> DOT
+              |
+              v
+QuickChart Graphviz API: DOT -> SVG
+              |
+              v
+FastAPI returns svg_url + task state
 ```
+
+---
+
+## Repository Structure
+
+```text
 agentic_converter/
-├── backend/
-│   └── app.py                  — FastAPI server (POST /upload-rtl, POST /regenerate/{id})
-├── frontend/
-│   └── app/
-│       ├── page.tsx            — Upload page (RTL file input + style prompt)
-│       └── diagram-review/
-│           └── page.tsx        — Diagram viewer (SVG output + re-style input)
-├── orchestrator/
-│   └── orchestrator.py         — LangGraph pipeline: wires agents together and runs the retry loop
 ├── agents/
-│   └── converter_agent/
-│       ├── config.py           — LLM setup (Gemini/OpenAI switch, prompt loader)
-│       ├── rtl_to_json_agent.py    — Architect: RTL → structured JSON
-│       ├── rtl_and_json_auditor_agent.py — Auditor: verifies JSON matches RTL
-│       ├── stylist_agent.py        — Stylist: maps user style requests to components
-│       ├── dot_compiler_agent.py   — DOT Compiler: JSON + styles → Graphviz DOT
-│       ├── prompts.md          — Architect, Auditor, Stylist prompts
-│       ├── diagram_spec.md     — DOT Compiler prompt + rendering rules
-│       └── tools/
-│           ├── json_schema.py      — RTLStructure Pydantic schema (Architect output)
-│           ├── auditor_schema.py   — AuditReport Pydantic schema (Auditor output)
-│           ├── style_schema.py     — StyleConfig Pydantic schema (Stylist output)
-│           └── rtl_extractor.py    — RTL parsing utilities
+│   ├── config.py                 # LLM selection + prompt section loader
+│   ├── architect/
+│   │   ├── agent.py              # RTL -> RTLStructure
+│   │   ├── schema.py
+│   │   └── prompt.md
+│   ├── auditor/
+│   │   ├── agent.py              # JSON audit report (is_valid + feedback)
+│   │   ├── schema.py
+│   │   └── prompt.md
+│   ├── stylist/
+│   │   ├── agent.py              # StyleConfig generation
+│   │   ├── schema.py
+│   │   └── prompt.md
+│   └── dot_compiler/
+│       ├── agent.py              # verified_json + style_map -> DOT text
+│       └── prompt.md
+├── orchestrator/
+│   └── orchestrator.py           # LangGraph state graph + artifact persistence
+├── backend/
+│   └── app.py                    # FastAPI routes and in-memory task store
 ├── tools/
-│   └── graphviz_quickchart.py  — HTTP client: sends DOT to QuickChart, returns SVG
-├── tests/                      — See tests/README.md
-├── core/                       — Shared base classes (base_agent, state)
+│   └── graphviz_quickchart.py    # DOT -> SVG HTTP client + error handling
+├── frontend/
+│   ├── app/page.tsx              # Upload workflow
+│   ├── app/diagram-review/page.tsx
+│   └── public/viewer.html        # Interactive diagram viewer
+├── tests/
+│   ├── test_json_schema.py
+│   ├── test_json_retry_loop.py
+│   ├── test_json_llm_self_correction.py
+│   ├── test_graphviz_quickchart.py
+│   └── README.md
 ├── requirements.txt
-└── pyproject.toml              — Pytest config (registers 'slow' marker)
+└── uv.lock
 ```
 
-### Pipeline flow
+---
 
+## Testing
+
+Run from project root:
+
+```bash
+# Default fast suite
+python -m pytest tests/ -v
+
+# Only slow LLM self-correction tests
+python -m pytest tests/ -v -s -m slow
+
+# Run all tests including slow
+python -m pytest tests/ -v -m ''
 ```
-User uploads RTL + style prompt
-        ↓
-[Architect] RTL → JSON (RTLStructure)
-        ↓
-[Auditor]  JSON valid? ──No──→ feedback → retry Architect (up to 3x)
-        ↓ Yes
-[Stylist]  style prompt → StyleConfig
-        ↓
-[DOT Compiler] JSON + StyleConfig → DOT source
-        ↓
-[QuickChart]   DOT → SVG
-        ↓
-SVG returned to frontend / saved to backend/static/output/
-```
+
+See `tests/README.md` for detailed guidance and test selection.
+
+---
+
+## Notes
+
+- Prompt sections are loaded from each agent's own `prompt.md` by header name (`# ...`) using `load_prompt(...)`.
+- Prompt files use Python `.format(...)`; literal braces in prompt text must be escaped as `{{` and `}}`.
+- Runtime artifacts are written under your temp directory (`/tmp/agentic_converter_runtime/...`) to avoid noisy reloads during development.
