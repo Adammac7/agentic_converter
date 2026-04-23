@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+markers = [
+    "slow: tests that make real LLM calls (deselected by default, run with: -m slow)",
+]
+addopts = "-m 'not slow'"
