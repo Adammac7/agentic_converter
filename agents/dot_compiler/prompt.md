@@ -176,10 +176,10 @@ All dashed, using the module's wire color:
 ### StyleConfig overrides
 
 If `style_map.module_styles` contains a key matching `instance_name`:
-- `fillcolor` → replaces FAMILY.CLUSTER on the cluster
-- `color` → replaces `black` on the cluster border
-- `style` → replaces `filled` on the cluster
-- `shape` → replaces `box3d` on the core node
+- `fillcolor` -> replaces FAMILY.CLUSTER on the cluster
+- `color` -> replaces `black` on the cluster border
+- `style` -> replaces `filled` on the cluster
+- `shape` -> replaces `box3d` on the core node
 
 ---
 
@@ -195,9 +195,9 @@ For global signals that fan out to **3 or more** instances (typically clk, rst_n
    ```
 
 3. Wire as a daisy chain. Bus color lookup:
-   - Signal matches `clk*` → `#4466AA`
-   - Signal matches `rst*` or `reset*` → `#AA4444`
-   - Otherwise → `#666666`
+   - Signal matches `clk*` -> `#4466AA`
+   - Signal matches `rst*` or `reset*` -> `#AA4444`
+   - Otherwise -> `#666666`
    - StyleConfig `wire_styles` override takes precedence.
 
 4. Edge pattern:
@@ -210,7 +210,7 @@ For global signals that fan out to **3 or more** instances (typically clk, rst_n
    <signal>_tap_<mod1> -> <mod1>_in_<signal> [color="<bus_color>", weight=5, class="bus <type> port_entry_w"];
    ```
 
-Signals connecting to only 1–2 instances: wire directly, no relay nodes.
+Signals connecting to only 1-2 instances: wire directly, no relay nodes.
 
 ---
 
@@ -230,7 +230,7 @@ to the destination instance's input port.
 
 ### Wire color assignment
 
-Use this pool, cycling by unique (source→dest) pair index:
+Use this pool, cycling by unique (source->dest) pair index:
 ```
 #7B68EE  #6A5ACD  #CD853F  #2E8B57  #DAA520
 #4682B4  #D2691E  #5F9EA0  #BC8F8F  #6B8E23
@@ -280,7 +280,7 @@ family = `BANK[index % 16]`.
 
 ```
 INDEX  CLUSTER     INPUT_PORT  CORE        OUTPUT_PORT  WIRE
-─────  ──────────  ──────────  ──────────  ───────────  ──────────
+-----  ----------  ----------  ----------  -----------  ----------
  0     #EEEDFE     #D8D5FA     #CECBF6     #B5B0EE      #9993D6
  1     #FAECE7     #F5D5CA     #F5C4B3     #E8A88E      #C4856B
  2     #E1F5EE     #C0EBDA     #9FE1CB     #7FD4B2      #6BBF9E
@@ -315,22 +315,22 @@ class="<func_type> <sort_order> abstract_w<W>_h<H> port_dir_LR"
 ```
 
 func_type inference from module_type string:
-- Contains ctrl/fsm/state → `control`
-- Contains mem/ram/rom/cache → `memory`
-- Contains fifo/buf/queue → `buffer`
-- Contains data/alu/mul/div/add → `datapath`
-- Contains fmt/out/tx/encode → `output`
-- Contains dec/rx/in → `input`
-- Contains clk/pll/osc → `clock`
-- Contains arb/mux/switch → `arbiter`
-- Otherwise → `logic`
+- Contains ctrl/fsm/state -> `control`
+- Contains mem/ram/rom/cache -> `memory`
+- Contains fifo/buf/queue -> `buffer`
+- Contains data/alu/mul/div/add -> `datapath`
+- Contains fmt/out/tx/encode -> `output`
+- Contains dec/rx/in -> `input`
+- Contains clk/pll/osc -> `clock`
+- Contains arb/mux/switch -> `arbiter`
+- Otherwise -> `logic`
 
 sort_order = (instance_index + 1) * 1000
 
 abstract size from total port count in port_mapping:
-- ≤ 10 ports: `abstract_w1.25_h0.9`
-- 11–20 ports: `abstract_w1.5_h0.9`
-- \> 20 ports: `abstract_w2.0_h1.2`
+- <= 10 ports: `abstract_w1.25_h0.9`
+- 11-20 ports: `abstract_w1.5_h0.9`
+- > 20 ports: `abstract_w2.0_h1.2`
 
 ### On port nodes:
 ```

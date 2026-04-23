@@ -114,7 +114,7 @@ async def upload_rtl(
 ):
     """
     1. Validate file extension.
-    2. Save the upload to agents/converter_agent/data/raw/ using shutil.
+    2. Save the upload to data/raw/ using shutil.
     3. Run the agentic pipeline in a thread (it is synchronous/blocking).
     4. Persist the resulting SVG and return its URL.
     """
