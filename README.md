@@ -19,10 +19,30 @@ Convert SystemVerilog RTL into architecture diagrams using a multi-agent LLM pip
 
 ## Setup
 
+Create and activate a virtual environment:
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+```powershell
+# Windows (PowerShell)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
 Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
+```
+
+When you return later, reactivate it from the project root:
+
+```bash
+source .venv/bin/activate
 ```
 
 Set up environment variables:
