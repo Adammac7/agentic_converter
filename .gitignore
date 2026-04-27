@@ -11,5 +11,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Agentic AI: Ignore Claude and Cursor files
 CLAUDE.md
 .claudeignore
+.cursor/

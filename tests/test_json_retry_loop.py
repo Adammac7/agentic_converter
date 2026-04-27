@@ -22,7 +22,7 @@ import pytest
 from agents.architect.schema import RTLStructure
 from agents.auditor.schema import AuditReport
 from agents.stylist.schema import StyleConfig
-from orchestrator.orchestrator import rtl_to_json_to_dot, MAX_ATTEMPTS
+from orchestrator.orchestrator import rtl_to_json_to_dot, MAX_ATTEMPTS, MAX_DIAGRAM_ATTEMPTS
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -254,3 +254,41 @@ class TestFeedbackContent:
             feedback_passed = second_call[1].get("feedback", "")
 
         assert specific_feedback in feedback_passed
+
+
+class TestDiagramValidationRetryLoop:
+    """Diagram validation failures should only retry stylist + dot."""
+
+    def test_invalid_dot_then_valid_dot_retries_without_recalling_architect(self, tmp_path: Path):
+        good = _good_rtl_structure()
+
+        with (
+            patch(_ARCH, return_value=good) as mock_arch,
+            patch(_AUDIT, return_value=_passing_audit()) as mock_audit,
+            patch(_STYLE, return_value=_empty_style()) as mock_style,
+            patch(_DOT, side_effect=["```dot\ndigraph top {}\n```", "digraph top {}"]) as mock_dot,
+        ):
+            result = rtl_to_json_to_dot(_make_state(run_dir=tmp_path / "run"))
+
+        assert mock_arch.call_count == 1
+        assert mock_audit.call_count == 1
+        assert mock_style.call_count == 2
+        assert mock_dot.call_count == 2
+        assert result["dot_source"] == "digraph top {}"
+
+    def test_invalid_dot_all_attempts_raises_runtime_error(self, tmp_path: Path):
+        good = _good_rtl_structure()
+
+        with (
+            patch(_ARCH, return_value=good) as mock_arch,
+            patch(_AUDIT, return_value=_passing_audit()) as mock_audit,
+            patch(_STYLE, return_value=_empty_style()) as mock_style,
+            patch(_DOT, return_value="not valid dot at all") as mock_dot,
+        ):
+            with pytest.raises(RuntimeError, match="diagram validation did not pass"):
+                rtl_to_json_to_dot(_make_state(run_dir=tmp_path / "run"))
+
+        assert mock_arch.call_count == 1
+        assert mock_audit.call_count == 1
+        assert mock_style.call_count == MAX_DIAGRAM_ATTEMPTS
+        assert mock_dot.call_count == MAX_DIAGRAM_ATTEMPTS
