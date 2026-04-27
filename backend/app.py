@@ -35,7 +35,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from orchestrator.orchestrator import cleanup_session_output, run_pipeline
+from orchestrator.orchestrator import (
+    cleanup_session_output,
+    run_pipeline,
+    run_regeneration_pipeline,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -214,16 +218,20 @@ class RegenerateRequest(BaseModel):
 @app.post("/regenerate/{task_id}")
 async def regenerate(task_id: str, body: RegenerateRequest):
     """
-    Re-run the full orchestrator for an existing RTL input, including
-    the Architect/Auditor loop. The latest edit is merged into a cumulative
-    style prompt so prior edits are preserved unless explicitly overridden.
+    Re-style an existing diagram from stored verified_json.
+    Skips Architect/Auditor and only runs style->DOT->SVG.
+    The latest edit is merged into a cumulative style prompt so prior edits
+    are preserved unless explicitly overridden.
     Returns a new { task_id, svg_url }.
     """
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
 
-    rtl_code = task["rtl_code"]
+    verified_json = task.get("verified_json")
+    if not verified_json:
+        raise HTTPException(status_code=500, detail="Task is missing verified_json.")
+
     cumulative_style_prompt = task.get("cumulative_style_prompt")
     if cumulative_style_prompt is None:
         cumulative_style_prompt = task.get("customization_text", "")
@@ -234,10 +242,9 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     try:
         logger.info("Regenerating from task %s", task_id)
         final = await asyncio.to_thread(
-            run_pipeline,
-            rtl_code,
+            run_regeneration_pipeline,
+            verified_json,
             merged_style_prompt,
-            "",
         )
         session_output_dir = final.get("session_output_dir")
         style_map = final.get("style_map")

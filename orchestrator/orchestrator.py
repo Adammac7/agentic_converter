@@ -472,6 +472,103 @@ def run_pipeline(
         raise
 
 
+def run_regeneration_pipeline(
+    verified_json: dict,
+    user_style_prompt: str,
+    session_label: str = "regenerate",
+    output_root: Optional[str] = None,
+    session_output_dir: Optional[str] = None,
+    ephemeral_session: bool = True,
+) -> dict:
+    """
+    Regenerate diagram artifacts from an already-verified JSON structure.
+    Skips the Architect/Auditor stage and only runs style->DOT->SVG.
+    """
+    started_at = datetime.now()
+    session_dir = (
+        Path(session_output_dir)
+        if session_output_dir
+        else _create_session_output_dir(
+            session_label=session_label,
+            output_root=output_root,
+            ephemeral=ephemeral_session,
+        )
+    )
+    run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
+
+    try:
+        style_map, dot_source = _run_json_to_dot_with_validation(
+            verified_json=verified_json,
+            user_style_prompt=user_style_prompt,
+            run_dir=str(run_dir),
+        )
+        svg_output = render_dot_to_svg(dot_source)
+
+        artifacts = {
+            "structured": _store_artifact(
+                session_dir,
+                "structured",
+                "json",
+                json.dumps(verified_json, indent=2),
+            ),
+            "style": _store_artifact(
+                session_dir,
+                "style",
+                "json",
+                json.dumps(style_map, indent=2),
+            ),
+            "dot": _store_artifact(session_dir, "dot", "dot", dot_source or ""),
+            "diagram": _store_artifact(session_dir, "diagram", "svg", svg_output or ""),
+        }
+        changed_artifacts = [name for name, meta in artifacts.items() if meta["is_new"]]
+        _write_json(
+            run_dir / "run.json",
+            {
+                "run_id": run_id,
+                "session_output_dir": str(session_dir),
+                "created_at": datetime.now().isoformat(),
+                "artifacts": artifacts,
+                "changed_artifacts": changed_artifacts,
+            },
+        )
+        _write_session_meta(
+            session_dir=session_dir,
+            session_label=session_label,
+            status="success",
+            started_at=started_at,
+            finished_at=datetime.now(),
+        )
+        return {
+            "verified_json": verified_json,
+            "style_map": style_map,
+            "dot_source": dot_source,
+            "svg_output": svg_output,
+            "session_output_dir": str(session_dir),
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+        }
+    except Exception as exc:
+        _write_json(
+            run_dir / "run.json",
+            {
+                "run_id": run_id,
+                "session_output_dir": str(session_dir),
+                "created_at": datetime.now().isoformat(),
+                "status": "failed",
+                "error": str(exc),
+            },
+        )
+        _write_session_meta(
+            session_dir=session_dir,
+            session_label=session_label,
+            status="failed",
+            started_at=started_at,
+            finished_at=datetime.now(),
+            error=str(exc),
+        )
+        raise
+
+
 def export_session_output(session_output_dir: str, export_root: str, label: Optional[str] = None) -> str:
     source = Path(session_output_dir)
     if not source.exists():
