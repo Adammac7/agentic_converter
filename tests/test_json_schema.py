@@ -1,4 +1,4 @@
-"""Tests for the RTLStructure schema (agents/converter_agent/tools/json_schema.py).
+"""Tests for the RTLStructure schema (agents/architect/schema.py).
 
 Focus: invalid / malformed JSON that the Architect agent might produce.
 Each test targets a single field or constraint so failures point directly
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agents.converter_agent.tools.json_schema import (
+from agents.architect.schema import (
     InternalWire,
     LogicBlock,
     Port,
@@ -22,10 +22,7 @@ from agents.converter_agent.tools.json_schema import (
 # ── Golden reference ────────────────────────────────────────────────────────
 # Load the known-good structure so we can corrupt one field at a time.
 
-_GOLDEN_PATH = (
-    Path(__file__).parent.parent
-    / "agents" / "converter_agent" / "data" / "processed" / "top_structure.json"
-)
+_GOLDEN_PATH = Path(__file__).parent / "test_data" / "top_structure.json"
 _GOLDEN = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))
 
 

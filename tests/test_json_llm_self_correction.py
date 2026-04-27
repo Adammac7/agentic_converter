@@ -24,9 +24,8 @@ from unittest.mock import patch, wraps
 
 import pytest
 
-from agents.converter_agent.tools.json_schema import RTLStructure
-from agents.converter_agent.rtl_to_json_agent import run_architect_agent
-from agents.converter_agent.rtl_and_json_auditor_agent import run_auditor_agent
+from agents.architect.schema import RTLStructure
+from agents.architect.agent import run_architect_agent
 from orchestrator.orchestrator import rtl_to_json_to_dot
 
 
@@ -38,19 +37,18 @@ pytestmark = pytest.mark.slow
 # ── Test data ───────────────────────────────────────────────────────────────
 
 _GOLDEN_PATH = (
-    Path(__file__).parent.parent
-    / "agents" / "converter_agent" / "data" / "processed" / "top_structure.json"
+    Path(__file__).parent / "test_data" / "top_structure.json"
 )
 _GOLDEN = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))
 
 _RTL_PATH = (
-    Path(__file__).parent.parent
-    / "agents" / "converter_agent" / "data" / "raw" / "top.sv"
+    Path(__file__).parent / "test_data" / "top.sv"
 )
 _RTL_CODE = _RTL_PATH.read_text(encoding="utf-8")
 
 
-def _make_state() -> dict:
+def _make_state(run_dir: Path) -> dict:
+    (run_dir / "iterations").mkdir(parents=True, exist_ok=True)
     return {
         "rtl_code": _RTL_CODE,
         "user_style_prompt": "no styling",
@@ -59,6 +57,9 @@ def _make_state() -> dict:
         "style_map": None,
         "dot_source": None,
         "svg_output": None,
+        "session_output_dir": str(run_dir.parent),
+        "run_id": run_dir.name,
+        "run_dir": str(run_dir),
     }
 
 
@@ -132,14 +133,14 @@ def _make_corrupted_architect(corrupt_fn):
 class TestLLMSelfCorrectionMissingPorts:
     """Inject JSON with missing port mappings → auditor flags it → LLM fixes it."""
 
-    def test_recovers_from_missing_ports(self):
+    def test_recovers_from_missing_ports(self, tmp_path: Path):
         wrapper, log = _make_corrupted_architect(corrupt_missing_ports)
 
         with patch(
             "orchestrator.orchestrator.run_architect_agent",
             side_effect=wrapper,
         ):
-            result = rtl_to_json_to_dot(_make_state())
+            result = rtl_to_json_to_dot(_make_state(run_dir=tmp_path / "run"))
 
         # The LLM should have needed at least 2 attempts
         assert log["count"] >= 2, "Expected retry — auditor should have rejected attempt 1"
@@ -158,14 +159,14 @@ class TestLLMSelfCorrectionMissingPorts:
 class TestLLMSelfCorrectionHallucinatedInstance:
     """Inject a fake instance → auditor flags hallucination → LLM removes it."""
 
-    def test_recovers_from_hallucinated_instance(self):
+    def test_recovers_from_hallucinated_instance(self, tmp_path: Path):
         wrapper, log = _make_corrupted_architect(corrupt_hallucinated_instance)
 
         with patch(
             "orchestrator.orchestrator.run_architect_agent",
             side_effect=wrapper,
         ):
-            result = rtl_to_json_to_dot(_make_state())
+            result = rtl_to_json_to_dot(_make_state(run_dir=tmp_path / "run"))
 
         assert log["count"] >= 2
         assert result["verified_json"] is not None
@@ -180,14 +181,14 @@ class TestLLMSelfCorrectionHallucinatedInstance:
 class TestLLMSelfCorrectionWrongWires:
     """Inject wrong wire names → auditor flags them → LLM corrects them."""
 
-    def test_recovers_from_wrong_wire_names(self):
+    def test_recovers_from_wrong_wire_names(self, tmp_path: Path):
         wrapper, log = _make_corrupted_architect(corrupt_wrong_wire_names)
 
         with patch(
             "orchestrator.orchestrator.run_architect_agent",
             side_effect=wrapper,
         ):
-            result = rtl_to_json_to_dot(_make_state())
+            result = rtl_to_json_to_dot(_make_state(run_dir=tmp_path / "run"))
 
         assert log["count"] >= 2
         assert result["verified_json"] is not None
@@ -204,14 +205,14 @@ class TestLLMSelfCorrectionWrongWires:
 class TestLLMSelfCorrectionMissingInstance:
     """Remove an instance entirely → auditor flags it → LLM adds it back."""
 
-    def test_recovers_from_missing_instance(self):
+    def test_recovers_from_missing_instance(self, tmp_path: Path):
         wrapper, log = _make_corrupted_architect(corrupt_missing_instance)
 
         with patch(
             "orchestrator.orchestrator.run_architect_agent",
             side_effect=wrapper,
         ):
-            result = rtl_to_json_to_dot(_make_state())
+            result = rtl_to_json_to_dot(_make_state(run_dir=tmp_path / "run"))
 
         assert log["count"] >= 2
         assert result["verified_json"] is not None

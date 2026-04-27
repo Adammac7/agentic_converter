@@ -59,13 +59,13 @@ python -m pytest tests/test_json_llm_self_correction.py::TestLLMSelfCorrectionMi
 ## Test file reference
 
 ### test_json_schema.py
-Tests the Pydantic schemas in `agents/converter_agent/tools/json_schema.py`.
+Tests the Pydantic schemas in `agents/architect/schema.py`.
 No LLM, no agents, runs in under a second.
 
 **When to use:** after changing any schema class (`RTLStructure`, `Port`, `LogicBlock`, `InternalWire`), or to verify that bad JSON from the LLM would be correctly rejected.
 
 **What it covers:**
-- The golden `top_structure.json` parses correctly (sanity baseline)
+- The golden `tests/test_data/top_structure.json` parses correctly (sanity baseline)
 - Missing required fields are rejected
 - Wrong types (int, None, string where list expected) are rejected
 - `LogicBlock` with no `port_mapping` is rejected (the most common LLM failure)
