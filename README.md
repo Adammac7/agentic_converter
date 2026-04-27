@@ -10,12 +10,16 @@ RTL → Diagram pipeline powered by an agentic LLM system (Architect → Auditor
 pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env` and add your API key:
+Copy `.env.example` to `.env` and add your credentials. The default backend is AWS Bedrock (Claude 3 Haiku):
 ```
-GOOGLE_API_KEY="your_key_here"
-GOOGLE_MODEL=gemini-2.5-flash
-USE_GEMINI=True
+LLM_BACKEND=bedrock
+BEDROCK_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0
+AWS_REGION=us-west-2
+AWS_ACCESS_KEY_ID="your_key_here"
+AWS_SECRET_ACCESS_KEY="your_secret_here"
 ```
+
+To use Gemini instead, set `LLM_BACKEND=gemini` and provide `GOOGLE_API_KEY` and `GOOGLE_MODEL`.
 
 ---
 
