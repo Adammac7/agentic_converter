@@ -151,9 +151,21 @@ function DiagramReviewContent() {
       const { task_id, svg_url }: { task_id: string; svg_url: string } =
         JSON.parse(rawText);
 
+      const newImgSrc = `http://localhost:8000${svg_url}`;
       setCurrentTaskId(task_id);
-      setImgSrc(`http://localhost:8000${svg_url}`);
+      setImgSrc(newImgSrc);
       setImgLoadError(false);
+
+      // Sync the browser URL so a page refresh re-loads the regenerated
+      // diagram instead of reverting to whatever task_id the user originally
+      // arrived with.
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("task_id", task_id);
+        url.searchParams.set("session_id", sessionId);
+        url.searchParams.set("img_url", newImgSrc);
+        window.history.replaceState(null, "", url.toString());
+      }
       // Keep the textarea filled with what the user just submitted — they
       // can tweak and resubmit without re-typing. Notes are persisted on
       // the server under session_id so a page reload restores them too.
@@ -178,12 +190,18 @@ function DiagramReviewContent() {
           >
             <span className="text-white font-extrabold text-lg tracking-tight leading-none">NXP</span>
           </div>
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl font-bold text-[#002D54] leading-tight">Diagram Editor</h1>
             <p className="text-sm text-gray-500 mt-0.5">
               Review the generated diagram and request refinements
             </p>
           </div>
+          <a
+            href="/?fresh=1"
+            className="text-sm font-semibold text-[#002D54] underline decoration-[#FF8200] underline-offset-2 hover:text-[#FF8200]"
+          >
+            New Diagram
+          </a>
         </div>
 
         {/* ── Card ── */}
@@ -201,9 +219,12 @@ function DiagramReviewContent() {
               </div>
             ) : imgSrc ? (
               /* <object> renders SVG with full fidelity (text, links, styles).
-                 The inner <img> is a fallback for browsers that block objects. */
+                 The inner <img> is a fallback for browsers that block objects.
+                 The `key` ties the element identity to the URL, forcing a
+                 remount on regenerate so the browser refetches the new SVG. */
               <div className="rounded-xl border border-gray-200 bg-white p-4 overflow-auto shadow-sm">
                 <object
+                  key={imgSrc}
                   data={imgSrc}
                   type="image/svg+xml"
                   className="w-full"

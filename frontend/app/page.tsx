@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -151,6 +151,41 @@ export default function Page() {
   const [errorMsg, setErrorMsg] = useState("");
 
   const setFile = useCallback((f: File) => setForm((p) => ({ ...p, file: f })), []);
+
+  // On mount, if the user has a prior session in Supabase (e.g. they just
+  // logged back in), restore it by redirecting to the diagram-review page.
+  // Auto-restore is suppressed when the URL carries ?fresh=1, which the
+  // `New Diagram` link uses to override the redirect.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("fresh") === "1") return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("http://localhost:8000/sessions/last", {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data: { task_id: string; session_id: string; svg_url: string } =
+          await res.json();
+        if (cancelled || !data?.task_id) return;
+        const imgUrl = `http://localhost:8000${data.svg_url}`;
+        router.replace(
+          `/diagram-review?task_id=${encodeURIComponent(data.task_id)}` +
+            `&session_id=${encodeURIComponent(data.session_id)}` +
+            `&img_url=${encodeURIComponent(imgUrl)}`
+        );
+      } catch {
+        // No previous session or backend unreachable — stay on upload page.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

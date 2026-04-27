@@ -47,7 +47,9 @@
       throw new Error("Missing task_id query param.");
     }
 
-    const dotResp = await fetch(`http://localhost:8000/task/${encodeURIComponent(taskId)}/dot`);
+    const dotResp = await fetch(`http://localhost:8000/task/${encodeURIComponent(taskId)}/dot`, {
+      credentials: "include",
+    });
     if (!dotResp.ok) {
       info.textContent = `Failed to load DOT for task ${taskId}`;
       throw new Error(`DOT fetch failed: ${dotResp.status}`);

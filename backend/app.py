@@ -22,10 +22,10 @@ GET /static/output/<task_id>.svg
 """
 
 import asyncio
-import json
 import logging
 import os
 import shutil
+import tempfile
 import traceback
 import uuid
 from pathlib import Path
@@ -45,17 +45,21 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth import get_current_user, router as auth_router
-from orchestrator.orchestrator import run_pipeline
+from orchestrator.orchestrator import build_graph, run_pipeline, _get_checkpointer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ── Paths (relative to project root, where uvicorn is launched) ───────────────
 
-_HERE       = Path(__file__).parent                        # backend/
-_ROOT       = _HERE.parent                                 # project root
-RAW_DIR     = _ROOT / "agents" / "converter_agent" / "data" / "raw"
-OUTPUT_DIR  = _HERE / "static" / "output"
+_HERE = Path(__file__).parent  # backend/
+_ROOT = _HERE.parent  # project root
+
+# Runtime artifacts should live outside the repo so uvicorn --reload does not
+# restart the server while handling uploads/regenerations.
+_RUNTIME_DIR = Path(tempfile.gettempdir()) / "agentic_converter_runtime"
+RAW_DIR = _RUNTIME_DIR / "raw"
+OUTPUT_DIR = _RUNTIME_DIR / "output"
 
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -129,6 +133,57 @@ def _fetch_session_notes(session_id: str, user_id: str) -> Optional[str]:
             return row[0] if row else None
 
 
+def _fetch_session_by_id(session_id: str, user_id: str) -> Optional[tuple[str, str]]:
+    """Return (svg_output, notes) for a session iff owned by user_id; else None."""
+    with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True, prepare_threshold=None) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT svg_output, notes FROM sessions WHERE id = %s AND user_id = %s;",
+                (session_id, user_id),
+            )
+            row = cur.fetchone()
+            return tuple(row) if row else None  # type: ignore[return-value]
+
+
+def _fetch_last_session(user_id: str) -> Optional[tuple[str, str, str]]:
+    """Return (session_id, svg_output, notes) for the user's most recent session."""
+    with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True, prepare_threshold=None) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, svg_output, notes
+                  FROM sessions
+                 WHERE user_id = %s
+              ORDER BY created_at DESC
+                 LIMIT 1;
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            return tuple(row) if row else None  # type: ignore[return-value]
+
+
+def _rehydrate_task(session_id: str, user_id: str, notes: str, svg_url: str) -> None:
+    """Repopulate _tasks[session_id] from the LangGraph checkpoint so /regenerate works after restart/login."""
+    checkpointer = _get_checkpointer()
+    if not checkpointer:
+        return
+    compiled = build_graph().compile(checkpointer=checkpointer)
+    snapshot = compiled.get_state({"configurable": {"thread_id": session_id}})
+    values = snapshot.values if snapshot else {}
+    _tasks[session_id] = {
+        "session_id":         session_id,
+        "user_id":             user_id,
+        "rtl_code":           values.get("rtl_code", ""),
+        "customization_text": notes or "",
+        "verified_json":      values.get("verified_json"),
+        "style_map":          values.get("style_map"),
+        "dot_source":         values.get("dot_source"),
+        "svg_url":            svg_url,
+        "prompt_history":     values.get("prompt_history", []),
+    }
+
+
 def _record_prompt(session_id: str, prompt_type: str, content: str) -> None:
     """Log one prompt row; human-readable mirror of the checkpointed prompt_history."""
     if not content:
@@ -151,7 +206,7 @@ async def upload_rtl(
 ):
     """
     1. Validate file extension.
-    2. Save the upload to agents/converter_agent/data/raw/ using shutil.
+    2. Save the upload to data/raw/ using shutil.
     3. Run the agentic pipeline in a thread (it is synchronous/blocking).
     4. Persist the resulting SVG and return its URL.
     """
@@ -265,7 +320,19 @@ async def regenerate(
     """
     task = _tasks.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+        # Cold cache (server restart or login on a fresh process) — restore
+        # the entry from Supabase + the LangGraph checkpoint before failing.
+        row = _fetch_session_by_id(task_id, user["id"])
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found.")
+        svg_output, notes = row
+        svg_path = OUTPUT_DIR / f"{task_id}.svg"
+        if svg_output:
+            svg_path.write_text(svg_output, encoding="utf-8")
+        _rehydrate_task(task_id, user["id"], notes or "", f"/static/output/{task_id}.svg")
+        task = _tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found.")
     if task.get("user_id") != user["id"]:
         # 404 (not 403) so we don't leak that the task exists under another owner.
         raise HTTPException(status_code=404, detail="Task not found.")
@@ -274,7 +341,10 @@ async def regenerate(
     edit_prompt = body.edit_prompt
 
     try:
-        logger.info("Regenerating on session %s (from task %s)", session_id, task_id)
+        logger.info(
+            "Regenerating on session %s (from task %s) | edit_prompt=%r",
+            session_id, task_id, edit_prompt,
+        )
 
         final = await asyncio.to_thread(
             run_pipeline,
@@ -287,6 +357,20 @@ async def regenerate(
         svg = final.get("svg_output") if final else None
         if not svg:
             raise ValueError("Regeneration produced no SVG output.")
+
+        prev_dot = task.get("dot_source") or ""
+        new_dot  = final.get("dot_source") or ""
+        prev_svg = task.get("svg_url") and (OUTPUT_DIR / Path(task["svg_url"]).name)
+        prev_svg_text = (
+            prev_svg.read_text(encoding="utf-8")
+            if prev_svg and Path(prev_svg).exists() else ""
+        )
+        logger.info(
+            "Regenerate diff | dot_changed=%s svg_changed=%s history=%d",
+            prev_dot != new_dot,
+            prev_svg_text != svg,
+            len(final.get("prompt_history") or []),
+        )
 
         new_task_id = str(uuid.uuid4())
         svg_url     = _save_svg(new_task_id, svg)
@@ -322,6 +406,39 @@ async def regenerate(
     )
 
 
+# ── GET /sessions/last ────────────────────────────────────────────────────────
+
+@app.get("/sessions/last")
+async def get_last_session(user: dict = Depends(get_current_user)):
+    """Return the current user's most recent session so the frontend can resume.
+
+    Writes the persisted SVG back to disk if it was lost (e.g. server restart
+    cleared the temp dir) and rehydrates the in-memory _tasks entry from the
+    LangGraph checkpoint so /regenerate works against the restored task_id.
+    """
+    row = _fetch_last_session(user["id"])
+    if not row:
+        raise HTTPException(status_code=404, detail="No previous session.")
+    session_id, svg_output, notes = row
+
+    # Always rewrite — the on-disk file may be stale (e.g. it holds the
+    # ORIGINAL upload's svg, but the DB row was overwritten by a later
+    # /regenerate that saved its svg under a different task_id).
+    svg_path = OUTPUT_DIR / f"{session_id}.svg"
+    if svg_output:
+        svg_path.write_text(svg_output, encoding="utf-8")
+    svg_url = f"/static/output/{session_id}.svg"
+
+    _rehydrate_task(session_id, user["id"], notes or "", svg_url)
+
+    return {
+        "task_id":    session_id,
+        "session_id": session_id,
+        "svg_url":    svg_url,
+        "notes":      notes or "",
+    }
+
+
 # ── GET /session/{session_id}/notes ───────────────────────────────────────────
 
 @app.get("/session/{session_id}/notes")
@@ -337,6 +454,38 @@ async def get_session_notes(session_id: str, user: dict = Depends(get_current_us
     return {"session_id": session_id, "notes": notes}
 
 
+@app.get("/task/{task_id}/dot")
+async def get_task_dot(task_id: str, user: dict = Depends(get_current_user)):
+    """
+    Return DOT source for a task so the interactive viewer can render/collapse
+    clusters client-side.
+    """
+    task = _tasks.get(task_id)
+    if not task:
+        row = _fetch_session_by_id(task_id, user["id"])
+        if not row:
+            raise HTTPException(status_code=404, detail="Task not found.")
+        svg_output, notes = row
+        svg_path = OUTPUT_DIR / f"{task_id}.svg"
+        if svg_output:
+            svg_path.write_text(svg_output, encoding="utf-8")
+        _rehydrate_task(task_id, user["id"], notes or "", f"/static/output/{task_id}.svg")
+        task = _tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found.")
+    if task.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    dot_source = task.get("dot_source")
+    if not dot_source:
+        raise HTTPException(status_code=404, detail="DOT source not found for task.")
+
+    return JSONResponse(
+        content={"task_id": task_id, "dot_source": dot_source},
+        media_type="application/json",
+    )
+
+
 # ── Static files (mounted last so API routes are never shadowed) ──────────────
-# Serves backend/static/ at /static → diagrams at /static/output/<id>.svg
-app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
+# Serves runtime output at /static/output/<id>.svg
+app.mount("/static", StaticFiles(directory=str(_RUNTIME_DIR)), name="static")
