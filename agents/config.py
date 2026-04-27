@@ -5,18 +5,24 @@ from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
+from langchain_aws import ChatBedrockConverse
 
 load_dotenv()
 
-# Determine if we should use the free Gemini tier or the paid OpenAI tier
-USE_GEMINI = os.getenv("USE_GEMINI").lower() == "true"
+# Backend selector: "bedrock" (default), "gemini", or "openai"
+LLM_BACKEND = os.getenv("LLM_BACKEND", "bedrock").lower()
 
-if USE_GEMINI:
+if LLM_BACKEND == "gemini":
     MODEL_NAME = os.getenv("GOOGLE_MODEL")
     API_KEY = os.getenv("GOOGLE_API_KEY")
-else:
+elif LLM_BACKEND == "openai":
     MODEL_NAME = os.getenv("OPENAI_MODEL")
     API_KEY = os.getenv("OPENAI_API_KEY")
+elif LLM_BACKEND == "bedrock":
+    MODEL_NAME = os.getenv("BEDROCK_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+else:
+    raise ValueError(f"Unknown LLM_BACKEND: {LLM_BACKEND!r}. Use 'bedrock', 'gemini', or 'openai'.")
 
 _ARCHITECT_PROMPT_FILE = Path(__file__).parent / "architect" / "prompt.md"
 _AUDITOR_PROMPT_FILE   = Path(__file__).parent / "auditor"   / "prompt.md"
@@ -77,18 +83,24 @@ def _sep(char: str = "=", width: int = 60, color: str = "") -> None:
 
 
 def get_llm(temperature=0):
-    if USE_GEMINI:
+    if LLM_BACKEND == "gemini":
         return ChatGoogleGenerativeAI(
             model=MODEL_NAME,
             google_api_key=API_KEY,
-            temperature=temperature
+            temperature=temperature,
         )
-    else:
+    if LLM_BACKEND == "openai":
         return ChatOpenAI(
-            model=MODEL_NAME, 
+            model=MODEL_NAME,
             openai_api_key=API_KEY,
-            temperature=temperature
+            temperature=temperature,
         )
+    # bedrock — credentials picked up from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars
+    return ChatBedrockConverse(
+        model=MODEL_NAME,
+        region_name=AWS_REGION,
+        temperature=temperature,
+    )
 
 
 def _normalize_llm_content(raw) -> str:

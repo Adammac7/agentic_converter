@@ -51,14 +51,23 @@ Set up environment variables:
 cp .env.example .env
 ```
 
-Then edit `.env`:
+Then edit `.env`. The default backend is AWS Bedrock:
 
 ```env
+# Backend selector: "bedrock" (default), "gemini", or "openai"
+LLM_BACKEND=bedrock
+
+# --- AWS Bedrock ---
+BEDROCK_MODEL=your_model_id_here
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID="your_key_here"
+AWS_SECRET_ACCESS_KEY="your_secret_here"
+
+# --- Gemini fallback (LLM_BACKEND=gemini) ---
 GOOGLE_API_KEY="your_key_here"
 GOOGLE_MODEL=gemini-2.5-flash
-USE_GEMINI=True
 
-# Optional OpenAI fallback when USE_GEMINI=False
+# --- OpenAI fallback (LLM_BACKEND=openai) ---
 OPENAI_API_KEY="your_openai_key_here"
 OPENAI_MODEL="gpt-4o-mini"
 ```
