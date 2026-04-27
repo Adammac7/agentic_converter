@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.s3_artifacts import load_s3_artifact_config, upload_run_artifacts_to_s3
 from orchestrator.orchestrator import (
     cleanup_session_output,
     run_pipeline,
@@ -155,6 +156,7 @@ async def upload_rtl(
             rtl_code,
             customization_text,   # user_style_prompt
             "",                   # user_edit_prompt — empty → should_customize returns "no"
+            run_id=task_id,
         )
         session_output_dir = final.get("session_output_dir")
 
@@ -168,6 +170,18 @@ async def upload_rtl(
 
         svg_url = _save_svg(task_id, svg_output)
         logger.info("Task %s complete — diagram saved to %s", task_id, svg_url)
+
+        s3_cfg = load_s3_artifact_config()
+        if s3_cfg:
+            upload_run_artifacts_to_s3(
+                s3_cfg,
+                task_id,
+                rtl_code=rtl_code,
+                verified_json=final["verified_json"],
+                style_map=final["style_map"],
+                dot_source=final["dot_source"] or "",
+                svg_output=svg_output,
+            )
 
     except HTTPException:
         raise  # already formatted, pass through as-is
@@ -239,12 +253,14 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     merged_style_prompt = _merge_style_intent(cumulative_style_prompt, edit_prompt)
 
     session_output_dir = None
+    new_task_id = str(uuid.uuid4())
     try:
         logger.info("Regenerating from task %s", task_id)
         final = await asyncio.to_thread(
             run_regeneration_pipeline,
             verified_json,
             merged_style_prompt,
+            run_id=new_task_id,
         )
         session_output_dir = final.get("session_output_dir")
         style_map = final.get("style_map")
@@ -254,9 +270,20 @@ async def regenerate(task_id: str, body: RegenerateRequest):
         if not svg or not style_map or not dot_source:
             raise ValueError("Regeneration produced no SVG output.")
 
-        new_task_id = str(uuid.uuid4())
-        svg_url     = _save_svg(new_task_id, svg)
+        svg_url = _save_svg(new_task_id, svg)
         logger.info("Regeneration complete — new task %s", new_task_id)
+
+        s3_cfg = load_s3_artifact_config()
+        if s3_cfg:
+            upload_run_artifacts_to_s3(
+                s3_cfg,
+                new_task_id,
+                rtl_code=task.get("rtl_code") or "",
+                verified_json=verified_json,
+                style_map=style_map,
+                dot_source=dot_source,
+                svg_output=svg,
+            )
 
     except HTTPException:
         raise
