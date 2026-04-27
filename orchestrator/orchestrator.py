@@ -113,8 +113,15 @@ def _store_artifact(
     }
 
 
-def _create_run_dir(session_dir: Path, run_label: str) -> tuple[str, Path]:
-    run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_sanitize_label(run_label)}"
+def _create_run_dir(
+    session_dir: Path,
+    run_label: str,
+    run_id_override: Optional[str] = None,
+) -> tuple[str, Path]:
+    if run_id_override and run_id_override.strip():
+        run_id = _sanitize_label(run_id_override.strip())
+    else:
+        run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_sanitize_label(run_label)}"
     run_dir = session_dir / "runs" / run_id
     (run_dir / "iterations").mkdir(parents=True, exist_ok=True)
     return run_id, run_dir
@@ -377,6 +384,7 @@ def run_pipeline(
     output_root: Optional[str] = None,
     session_output_dir: Optional[str] = None,
     ephemeral_session: bool = True,
+    run_id: Optional[str] = None,
 ) -> PipelineState:
     """Compile and run the graph; return the final state."""
     started_at = datetime.now()
@@ -389,7 +397,11 @@ def run_pipeline(
             ephemeral=ephemeral_session,
         )
     )
-    run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
+    resolved_run_id, run_dir = _create_run_dir(
+        session_dir=session_dir,
+        run_label=session_label,
+        run_id_override=run_id,
+    )
 
     app = build_graph().compile()
 
@@ -402,7 +414,7 @@ def run_pipeline(
         "dot_source":        None,
         "svg_output":        None,
         "session_output_dir": str(session_dir),
-        "run_id":            run_id,
+        "run_id":            resolved_run_id,
         "run_dir":           str(run_dir),
     }
     try:
@@ -429,7 +441,7 @@ def run_pipeline(
         _write_json(
             run_dir / "run.json",
             {
-                "run_id": run_id,
+                "run_id": resolved_run_id,
                 "session_output_dir": str(session_dir),
                 "created_at": datetime.now().isoformat(),
                 "artifacts": artifacts,
@@ -447,14 +459,14 @@ def run_pipeline(
         return {
             **result,
             "session_output_dir": str(session_dir),
-            "run_id": run_id,
+            "run_id": resolved_run_id,
             "run_dir": str(run_dir),
         }
     except Exception as exc:
         _write_json(
             run_dir / "run.json",
             {
-                "run_id": run_id,
+                "run_id": resolved_run_id,
                 "session_output_dir": str(session_dir),
                 "created_at": datetime.now().isoformat(),
                 "status": "failed",
@@ -479,6 +491,7 @@ def run_regeneration_pipeline(
     output_root: Optional[str] = None,
     session_output_dir: Optional[str] = None,
     ephemeral_session: bool = True,
+    run_id: Optional[str] = None,
 ) -> dict:
     """
     Regenerate diagram artifacts from an already-verified JSON structure.
@@ -494,7 +507,11 @@ def run_regeneration_pipeline(
             ephemeral=ephemeral_session,
         )
     )
-    run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
+    resolved_run_id, run_dir = _create_run_dir(
+        session_dir=session_dir,
+        run_label=session_label,
+        run_id_override=run_id,
+    )
 
     try:
         style_map, dot_source = _run_json_to_dot_with_validation(
@@ -524,7 +541,7 @@ def run_regeneration_pipeline(
         _write_json(
             run_dir / "run.json",
             {
-                "run_id": run_id,
+                "run_id": resolved_run_id,
                 "session_output_dir": str(session_dir),
                 "created_at": datetime.now().isoformat(),
                 "artifacts": artifacts,
@@ -544,14 +561,14 @@ def run_regeneration_pipeline(
             "dot_source": dot_source,
             "svg_output": svg_output,
             "session_output_dir": str(session_dir),
-            "run_id": run_id,
+            "run_id": resolved_run_id,
             "run_dir": str(run_dir),
         }
     except Exception as exc:
         _write_json(
             run_dir / "run.json",
             {
-                "run_id": run_id,
+                "run_id": resolved_run_id,
                 "session_output_dir": str(session_dir),
                 "created_at": datetime.now().isoformat(),
                 "status": "failed",
