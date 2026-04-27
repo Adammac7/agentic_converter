@@ -143,6 +143,31 @@ FastAPI returns svg_url + task state
 
 ---
 
+## External API Call Counts
+
+Call counts vary based on retry loops. Baseline ("happy path") means all validations pass on first attempt.
+
+- Full pipeline (`POST /upload-rtl`)
+  - Happy path: `5` external calls total
+    - `4` LLM calls (Architect, Auditor, Stylist, DOT Compiler)
+    - `1` QuickChart Graphviz render call (DOT -> SVG)
+  - Worst case with retries (`MAX_ATTEMPTS=3`, `MAX_DIAGRAM_ATTEMPTS=3`): `13` calls total
+    - `6` LLM calls in Architect/Auditor loop
+    - `6` LLM calls in Stylist/DOT loop
+    - `1` QuickChart render call
+
+- Regeneration (`POST /regenerate/{task_id}`)
+  - Happy path: `3` external calls total
+    - `2` LLM calls (Stylist, DOT Compiler)
+    - `1` QuickChart Graphviz render call
+  - Worst case with diagram retries (`MAX_DIAGRAM_ATTEMPTS=3`): `7` calls total
+    - `6` LLM calls in Stylist/DOT loop
+    - `1` QuickChart render call
+
+Note: regeneration reuses stored `verified_json` and skips the Architect/Auditor stage.
+
+---
+
 ## Repository Structure
 
 ```text

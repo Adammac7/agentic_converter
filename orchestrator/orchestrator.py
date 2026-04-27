@@ -4,7 +4,8 @@ orchestrator/orchestrator.py
 LangGraph orchestrator for the RTL-to-Diagram pipeline.
 
 Graph nodes:
-    rtl_to_json_to_dot — Architect + Auditor retry loop, then Stylist and DOT Compiler.
+    rtl_to_json       — Architect + Auditor retry loop.
+    json_to_dot       — Stylist + DOT Compiler with diagram validation loop.
     dot_to_graph       — Renders DOT -> SVG.
     update_dot         — Applies user edits to DOT source, loops back to dot_to_graph (placeholder).
 """
@@ -27,6 +28,7 @@ from tools.graphviz_quickchart import render_dot_to_svg, GraphvizRenderError
 
 
 MAX_ATTEMPTS = 3
+MAX_DIAGRAM_ATTEMPTS = 3
 
 
 def _sanitize_label(label: str) -> str:
@@ -58,6 +60,34 @@ def _write_json(path: Path, payload: dict) -> None:
 
 def _write_text(path: Path, payload: str) -> None:
     path.write_text(payload, encoding="utf-8")
+
+
+def _has_balanced_braces(source: str) -> bool:
+    depth = 0
+    for char in source:
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _validate_diagram_candidate(dot_source: str) -> tuple[bool, str]:
+    candidate = (dot_source or "").strip()
+    if not candidate:
+        return False, "DOT output is empty."
+    if "```" in candidate:
+        return False, "DOT output contains markdown fences."
+    lowered = candidate.lower()
+    if "digraph" not in lowered:
+        return False, "DOT output is missing a 'digraph' declaration."
+    if "{" not in candidate or "}" not in candidate:
+        return False, "DOT output is missing braces."
+    if not _has_balanced_braces(candidate):
+        return False, "DOT output has unbalanced braces."
+    return True, "DOT output passed validation."
 
 
 def _store_artifact(
@@ -128,11 +158,9 @@ class PipelineState(TypedDict):
 
 # Node functions ────────────────────────────────────────────────────────────
 
-def rtl_to_json_to_dot(state: PipelineState) -> dict:
+def rtl_to_json(state: PipelineState) -> dict:
     """
-    Runs the Architect -> Auditor retry loop, then Stylist and DOT Compiler.
-
-    Pipeline: RTL -> JSON (validated) -> styles -> DOT
+    Runs the Architect -> Auditor retry loop.
     """
 
     feedback = ""
@@ -180,29 +208,102 @@ def rtl_to_json_to_dot(state: PipelineState) -> dict:
     if verified_json is None:
         raise RuntimeError(f"Pipeline failed: could not produce valid JSON after {MAX_ATTEMPTS} attempts.")
 
-    # Step 3 — Stylist
-    try:
-        style_result = run_stylist_agent(
-            architect_json=json.dumps(verified_json, indent=2),
-            user_request=state["user_style_prompt"],
-        )
-        style_dict = style_result.model_dump()
-    except Exception as e:
-        print(f"  [Stylist error] {e}")
-        raise
+    return {"verified_json": verified_json}
 
-    # Step 4 - DOT Compiler
-    try:
-        dot_source = run_dot_compiler_agent(verified_json, style_dict)
-    except Exception as e:
-        print(f"  [DOT Compiler error] {e}")
-        raise
+
+def _run_json_to_dot_with_validation(
+    verified_json: dict,
+    user_style_prompt: str,
+    run_dir: str,
+) -> tuple[dict, str]:
+    style_feedback = ""
+    style_dict = None
+    dot_source = None
+    last_validation_error = "Diagram validation did not run."
+
+    for diagram_attempt in range(1, MAX_DIAGRAM_ATTEMPTS + 1):
+        print(f"[diagram_validation] Attempt {diagram_attempt}/{MAX_DIAGRAM_ATTEMPTS}")
+        diagram_iter_dir = Path(run_dir) / "iterations" / f"diagram_iter_{diagram_attempt:02d}"
+        diagram_iter_dir.mkdir(parents=True, exist_ok=True)
+
+        stylist_request = user_style_prompt
+        if style_feedback:
+            stylist_request = (
+                f"{user_style_prompt}\n\n"
+                f"CRITICAL DIAGRAM FEEDBACK: {style_feedback}"
+            )
+
+        try:
+            style_result = run_stylist_agent(
+                architect_json=json.dumps(verified_json, indent=2),
+                user_request=stylist_request,
+            )
+            style_dict = style_result.model_dump()
+            _write_json(diagram_iter_dir / "style.json", style_dict)
+        except Exception as e:
+            style_feedback = f"Stylist error: {e}"
+            _write_text(diagram_iter_dir / "stylist_error.txt", str(e))
+            print(f"  [Stylist error] {e}")
+            continue
+
+        try:
+            dot_source = run_dot_compiler_agent(verified_json, style_dict)
+            _write_text(diagram_iter_dir / "dot.dot", dot_source or "")
+        except Exception as e:
+            style_feedback = f"DOT compiler error: {e}"
+            _write_text(diagram_iter_dir / "dot_error.txt", str(e))
+            print(f"  [DOT Compiler error] {e}")
+            continue
+
+        is_valid_dot, validation_message = _validate_diagram_candidate(dot_source)
+        _write_text(diagram_iter_dir / "diagram_validation.txt", validation_message)
+        if is_valid_dot:
+            last_validation_error = ""
+            break
+
+        style_feedback = validation_message
+        last_validation_error = validation_message
+        print(f"  [Diagram invalid] {validation_message}")
+
+    if not style_dict or not dot_source:
+        raise RuntimeError("Pipeline failed: could not produce DOT output for diagram generation.")
+    if last_validation_error:
+        raise RuntimeError(
+            "Pipeline failed: diagram validation did not pass after "
+            f"{MAX_DIAGRAM_ATTEMPTS} attempts. Last error: {last_validation_error}"
+        )
+    return style_dict, dot_source
+
+
+def json_to_dot(state: PipelineState) -> dict:
+    """
+    Runs Stylist + DOT Compiler with programmatic diagram validation retries.
+    """
+    style_dict, dot_source = _run_json_to_dot_with_validation(
+        verified_json=state["verified_json"],
+        user_style_prompt=state["user_style_prompt"],
+        run_dir=state["run_dir"],
+    )
+
+    return {
+        "style_map": style_dict,
+        "dot_source": dot_source,
+    }
+
+
+def rtl_to_json_to_dot(state: PipelineState) -> dict:
+    """
+    Backward-compatible wrapper retained for tests and temporary direct callers.
+    The LangGraph runtime now uses the split nodes: rtl_to_json -> json_to_dot.
+    """
+    json_step = rtl_to_json(state)
+    dot_step = json_to_dot({**state, **json_step})
 
     # Step 5 - Return final package
     return {
-        "verified_json": verified_json,
-        "style_map":     style_dict,
-        "dot_source":    dot_source,
+        "verified_json": json_step["verified_json"],
+        "style_map": dot_step["style_map"],
+        "dot_source": dot_step["dot_source"],
     }
 
 
@@ -220,16 +321,13 @@ def dot_to_graph(state: PipelineState) -> dict:
 
 
 def update_dot(state: PipelineState) -> dict:
-    style_result = run_stylist_agent(
-        architect_json=json.dumps(state["verified_json"], indent=2),
-        user_request=state["user_edit_prompt"],
-    )
-    dot_source = run_dot_compiler_agent(
-        state["verified_json"], 
-        style_result.model_dump()
+    style_dict, dot_source = _run_json_to_dot_with_validation(
+        verified_json=state["verified_json"],
+        user_style_prompt=state["user_edit_prompt"],
+        run_dir=state["run_dir"],
     )
     return {
-        "style_map":      style_result.model_dump(),
+        "style_map":      style_dict,
         "dot_source":     dot_source,
         "user_edit_prompt": None,
     }
@@ -249,14 +347,16 @@ def should_customize(state: PipelineState) -> str:
 def build_graph() -> StateGraph:
     graph = StateGraph(PipelineState)
 
-    graph.add_node("rtl_to_json_to_dot", rtl_to_json_to_dot)
+    graph.add_node("rtl_to_json", rtl_to_json)
+    graph.add_node("json_to_dot", json_to_dot)
     graph.add_node("dot_to_graph", dot_to_graph)
     graph.add_node("update_dot", update_dot)
 
-    graph.set_entry_point("rtl_to_json_to_dot")
+    graph.set_entry_point("rtl_to_json")
 
     # Add edges between nodes
-    graph.add_edge("rtl_to_json_to_dot", "dot_to_graph")
+    graph.add_edge("rtl_to_json", "json_to_dot")
+    graph.add_edge("json_to_dot", "dot_to_graph")
     graph.add_conditional_edges(
         "dot_to_graph",
         should_customize,
@@ -346,6 +446,103 @@ def run_pipeline(
         )
         return {
             **result,
+            "session_output_dir": str(session_dir),
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+        }
+    except Exception as exc:
+        _write_json(
+            run_dir / "run.json",
+            {
+                "run_id": run_id,
+                "session_output_dir": str(session_dir),
+                "created_at": datetime.now().isoformat(),
+                "status": "failed",
+                "error": str(exc),
+            },
+        )
+        _write_session_meta(
+            session_dir=session_dir,
+            session_label=session_label,
+            status="failed",
+            started_at=started_at,
+            finished_at=datetime.now(),
+            error=str(exc),
+        )
+        raise
+
+
+def run_regeneration_pipeline(
+    verified_json: dict,
+    user_style_prompt: str,
+    session_label: str = "regenerate",
+    output_root: Optional[str] = None,
+    session_output_dir: Optional[str] = None,
+    ephemeral_session: bool = True,
+) -> dict:
+    """
+    Regenerate diagram artifacts from an already-verified JSON structure.
+    Skips the Architect/Auditor stage and only runs style->DOT->SVG.
+    """
+    started_at = datetime.now()
+    session_dir = (
+        Path(session_output_dir)
+        if session_output_dir
+        else _create_session_output_dir(
+            session_label=session_label,
+            output_root=output_root,
+            ephemeral=ephemeral_session,
+        )
+    )
+    run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
+
+    try:
+        style_map, dot_source = _run_json_to_dot_with_validation(
+            verified_json=verified_json,
+            user_style_prompt=user_style_prompt,
+            run_dir=str(run_dir),
+        )
+        svg_output = render_dot_to_svg(dot_source)
+
+        artifacts = {
+            "structured": _store_artifact(
+                session_dir,
+                "structured",
+                "json",
+                json.dumps(verified_json, indent=2),
+            ),
+            "style": _store_artifact(
+                session_dir,
+                "style",
+                "json",
+                json.dumps(style_map, indent=2),
+            ),
+            "dot": _store_artifact(session_dir, "dot", "dot", dot_source or ""),
+            "diagram": _store_artifact(session_dir, "diagram", "svg", svg_output or ""),
+        }
+        changed_artifacts = [name for name, meta in artifacts.items() if meta["is_new"]]
+        _write_json(
+            run_dir / "run.json",
+            {
+                "run_id": run_id,
+                "session_output_dir": str(session_dir),
+                "created_at": datetime.now().isoformat(),
+                "artifacts": artifacts,
+                "changed_artifacts": changed_artifacts,
+            },
+        )
+        _write_session_meta(
+            session_dir=session_dir,
+            session_label=session_label,
+            status="success",
+            started_at=started_at,
+            finished_at=datetime.now(),
+        )
+        return {
+            "verified_json": verified_json,
+            "style_map": style_map,
+            "dot_source": dot_source,
+            "svg_output": svg_output,
             "session_output_dir": str(session_dir),
             "run_id": run_id,
             "run_dir": str(run_dir),

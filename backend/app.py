@@ -35,7 +35,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from orchestrator.orchestrator import run_pipeline
+from orchestrator.orchestrator import (
+    cleanup_session_output,
+    run_pipeline,
+    run_regeneration_pipeline,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -142,6 +146,7 @@ async def upload_rtl(
     # pool so FastAPI's async event loop is not blocked.
     # The entire block — pipeline execution, svg_output validation, and file
     # persistence — is wrapped so no exception escapes as a bare 500.
+    session_output_dir = None
     try:
         logger.info("Starting pipeline for task %s", task_id)
 
@@ -151,6 +156,7 @@ async def upload_rtl(
             customization_text,   # user_style_prompt
             "",                   # user_edit_prompt — empty → should_customize returns "no"
         )
+        session_output_dir = final.get("session_output_dir")
 
         # Guard: pipeline must return a non-empty SVG string.
         svg_output = final.get("svg_output") if final else None
@@ -175,6 +181,16 @@ async def upload_rtl(
             status_code=500,
             detail=f"Pipeline error: {type(exc).__name__}: {exc}",
         ) from exc
+    finally:
+        if session_output_dir:
+            try:
+                cleanup_session_output(session_output_dir)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to cleanup session output %s: %s",
+                    session_output_dir,
+                    cleanup_error,
+                )
 
     # Store state for subsequent regenerations.
     _tasks[task_id] = {
@@ -202,30 +218,35 @@ class RegenerateRequest(BaseModel):
 @app.post("/regenerate/{task_id}")
 async def regenerate(task_id: str, body: RegenerateRequest):
     """
-    Re-run the full orchestrator for an existing RTL input, including
-    the Architect/Auditor loop. The latest edit is merged into a cumulative
-    style prompt so prior edits are preserved unless explicitly overridden.
+    Re-style an existing diagram from stored verified_json.
+    Skips Architect/Auditor and only runs style->DOT->SVG.
+    The latest edit is merged into a cumulative style prompt so prior edits
+    are preserved unless explicitly overridden.
     Returns a new { task_id, svg_url }.
     """
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
 
-    rtl_code = task["rtl_code"]
+    verified_json = task.get("verified_json")
+    if not verified_json:
+        raise HTTPException(status_code=500, detail="Task is missing verified_json.")
+
     cumulative_style_prompt = task.get("cumulative_style_prompt")
     if cumulative_style_prompt is None:
         cumulative_style_prompt = task.get("customization_text", "")
     edit_prompt = body.edit_prompt
     merged_style_prompt = _merge_style_intent(cumulative_style_prompt, edit_prompt)
 
+    session_output_dir = None
     try:
         logger.info("Regenerating from task %s", task_id)
         final = await asyncio.to_thread(
-            run_pipeline,
-            rtl_code,
+            run_regeneration_pipeline,
+            verified_json,
             merged_style_prompt,
-            "",
         )
+        session_output_dir = final.get("session_output_dir")
         style_map = final.get("style_map")
         dot_source = final.get("dot_source")
         svg = final.get("svg_output")
@@ -249,6 +270,16 @@ async def regenerate(task_id: str, body: RegenerateRequest):
             status_code=500,
             detail=f"Regeneration error: {type(exc).__name__}: {exc}",
         ) from exc
+    finally:
+        if session_output_dir:
+            try:
+                cleanup_session_output(session_output_dir)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to cleanup session output %s: %s",
+                    session_output_dir,
+                    cleanup_error,
+                )
 
     _tasks[new_task_id] = {
         **task,
