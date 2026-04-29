@@ -115,13 +115,19 @@ def test_port_wrong_type(field, bad_value):
 def test_logic_block_missing_port_mapping():
     """The #1 LLM failure mode: omitting port_mapping entirely."""
     with pytest.raises(ValidationError):
-        LogicBlock(instance_name="u_ctrl", module_type="ctrl", label="Controller")
+        LogicBlock(instance_name="u_ctrl", module_type="ctrl", label="Controller", description="Ctrl block")
 
 
 def test_logic_block_missing_label():
     """LLM omits the human-readable label field."""
     with pytest.raises(ValidationError):
-        LogicBlock(instance_name="u_ctrl", module_type="ctrl", port_mapping={"clk": "clk"})
+        LogicBlock(instance_name="u_ctrl", module_type="ctrl", description="Ctrl block", port_mapping={"clk": "clk"})
+
+
+def test_logic_block_missing_description():
+    """LLM omits the functional description field."""
+    with pytest.raises(ValidationError):
+        LogicBlock(instance_name="u_ctrl", module_type="ctrl", label="Controller", port_mapping={"clk": "clk"})
 
 
 def test_logic_block_port_mapping_wrong_type():
@@ -131,23 +137,26 @@ def test_logic_block_port_mapping_wrong_type():
             instance_name="u_ctrl",
             module_type="ctrl",
             label="Controller",
+            description="Ctrl block",
             port_mapping=[("clk", "clk")],
         )
 
 
 def test_logic_block_missing_instance_name():
     with pytest.raises(ValidationError):
-        LogicBlock(module_type="ctrl", label="Controller", port_mapping={"clk": "clk"})
+        LogicBlock(module_type="ctrl", label="Controller", description="Ctrl block", port_mapping={"clk": "clk"})
 
 
 def test_logic_block_missing_module_type():
     with pytest.raises(ValidationError):
-        LogicBlock(instance_name="u_ctrl", label="Controller", port_mapping={"clk": "clk"})
+        LogicBlock(instance_name="u_ctrl", label="Controller", description="Ctrl block", port_mapping={"clk": "clk"})
 
 
 def test_logic_block_empty_port_mapping_parses():
     """Empty port_mapping is schema-valid (auditor catches the semantic error)."""
-    block = LogicBlock(instance_name="u_ctrl", module_type="ctrl", label="Controller", port_mapping={})
+    block = LogicBlock(
+        instance_name="u_ctrl", module_type="ctrl", label="Controller", description="Ctrl block", port_mapping={}
+    )
     assert block.port_mapping == {}
 
 
@@ -158,6 +167,7 @@ def test_logic_block_nested_port_mapping_rejected():
             instance_name="u_ctrl",
             module_type="ctrl",
             label="Controller",
+            description="Ctrl block",
             port_mapping={"clk": {"wire": "clk", "width": 1}},
         )
 
@@ -185,7 +195,7 @@ def test_instance_with_port_mapping_removed():
 def test_instance_with_extra_unknown_field():
     """Extra fields should be silently ignored (Pydantic default)."""
     data = _golden()
-    data["instances"][0]["description"] = "this is the controller"
+    data["instances"][0]["unknown_random_field"] = "should be ignored"
     result = RTLStructure(**data)
     assert len(result.instances) == 5
 
@@ -194,5 +204,14 @@ def test_port_with_int_width_rejected():
     """LLMs sometimes return width as int instead of str. Pydantic rejects it."""
     data = _golden()
     data["top_level_ports"][0]["width"] = 1
+    with pytest.raises(ValidationError):
+        RTLStructure(**data)
+
+
+def test_duplicate_module_type_rejected():
+    """When the same RTL module is instantiated twice, the LLM must derive a unique
+    module_type per instance — duplicates would collide as DOT node IDs."""
+    data = _golden()
+    data["instances"][1]["module_type"] = data["instances"][0]["module_type"]
     with pytest.raises(ValidationError):
         RTLStructure(**data)

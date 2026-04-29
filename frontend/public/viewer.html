@@ -91,9 +91,7 @@
       while ((m = re.exec(blockContent)) !== null) {
         const id = m[1];
         if (["node", "edge", "graph", "subgraph", "rank"].includes(id)) continue;
-        const attrs = m[2];
-        const lm = attrs.match(/label\s*=\s*"([^"]+)"/);
-        nodes[id] = lm ? lm[1] : id;
+        nodes[id] = true;
       }
       return nodes;
     }
@@ -113,12 +111,35 @@
       });
     }
 
-    function escRecord(s) {
-      return s.replace(/([|{}<>\\])/g, "\\$1");
+    function trimExpandedClusterLabel(labelText) {
+      const parts = labelText.split("\\n");
+      if (parts.length <= 2) return labelText;
+      return parts.slice(0, 2).join("\\n");
+    }
+
+    function stripDescriptionsFromExpandedClusters(dot) {
+      const leafNonExternal = getLeafClusters(dotSource)
+        .filter((n) => n !== "cluster_ext_in" && n !== "cluster_ext_out");
+
+      for (const clusterName of leafNonExternal) {
+        if (collapsedClusters.has(clusterName)) continue;
+        const block = findSubgraphBlock(dot, clusterName);
+        if (!block) continue;
+
+        const updatedContent = block.content.replace(
+          /label\s*=\s*"([^"]+)"/,
+          (_m, currentLabel) => `label="${trimExpandedClusterLabel(currentLabel)}"`
+        );
+
+        dot = dot.replace(block.full, block.full.replace(block.content, updatedContent));
+      }
+
+      return dot;
     }
 
     function buildDot() {
       let dot = dotSource;
+      dot = stripDescriptionsFromExpandedClusters(dot);
 
       for (const clusterName of collapsedClusters) {
         const block = findSubgraphBlock(dot, clusterName);

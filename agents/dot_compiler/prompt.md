@@ -116,9 +116,8 @@ subgraph cluster_top {{
     // bus relay nodes go here (see BUS RELAY section)
 
     subgraph cluster_<module_type> {{
-        label="<instances[i].label>\n<instance_name>";
+        label="<instances[i].label>\n<instance_name>\n<instances[i].description>";
         style=filled; color=black; fillcolor="<FAMILY.CLUSTER>";
-        class="<sort_order> abstract_w1.25_h0.9 port_dir_LR";
         margin=12;
 
         <module_type>_core [label="<module_type>", shape=box3d, fillcolor="<FAMILY.CORE>",
@@ -278,7 +277,7 @@ abstract size from total port count in port_mapping:
 ### On inter-module edges:
 ```
 class="crosscluster"   // forward
-class="crosscluster"   // backward
+class="crosscluster"   // backward (direction carried by dir=back attribute)
 ```
 
 ### On bus edges:

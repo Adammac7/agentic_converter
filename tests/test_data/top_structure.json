@@ -97,6 +97,7 @@
       "instance_name": "u_ctrl",
       "module_type": "ctrl",
       "label": "Controller",
+      "description": "Sequences memory requests and orchestrates start/done handshake",
       "port_mapping": {
         "clk": "clk",
         "rst_n": "rst_n",
@@ -112,6 +113,7 @@
       "instance_name": "u_datapath",
       "module_type": "datapath",
       "label": "Datapath",
+      "description": "Performs arithmetic on input data and produces FIFO write stream",
       "port_mapping": {
         "clk": "clk",
         "rst_n": "rst_n",
@@ -128,6 +130,7 @@
       "instance_name": "u_memory_intf",
       "module_type": "memory_intf",
       "label": "Memory Interface",
+      "description": "Issues memory read requests and returns data with ack handshake",
       "port_mapping": {
         "clk": "clk",
         "rst_n": "rst_n",
@@ -141,6 +144,7 @@
       "instance_name": "u_fifo",
       "module_type": "fifo",
       "label": "Buffer",
+      "description": "Decouples datapath from output formatter via elastic FIFO",
       "port_mapping": {
         "clk": "clk",
         "rst_n": "rst_n",
@@ -156,6 +160,7 @@
       "instance_name": "u_output_formatter",
       "module_type": "output_formatter",
       "label": "Output Stage",
+      "description": "Formats FIFO data into final result with valid handshake",
       "port_mapping": {
         "clk": "clk",
         "rst_n": "rst_n",

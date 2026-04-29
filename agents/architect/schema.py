@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Dict, List, Literal
 
 
@@ -34,6 +34,13 @@ class LogicBlock(BaseModel):
     )
     label: str = Field(
         description="Human-readable name describing this block's function, used as the diagram cluster header (e.g., 'Write Controller', 'Memory Array', 'SPI Clock Divider')"
+    )
+    description: str = Field(
+        description=(
+            "One-line functional summary of what this block does, derived from RTL behavior or comments. "
+            "Max ~80 characters. Rendered as a sub-line under the cluster label so engineers can see "
+            "module purpose at a glance. Example: 'Generates CRC-15 over outgoing frame bits'."
+        )
     )
     port_mapping: Dict[str, str] = Field(
         description=(
@@ -78,3 +85,20 @@ class RTLStructure(BaseModel):
     instances: List[LogicBlock] = Field(
         description="List of all sub-components found inside the design"
     )
+
+    @model_validator(mode="after")
+    def _module_types_unique(self) -> "RTLStructure":
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for inst in self.instances:
+            if inst.module_type in seen:
+                duplicates.add(inst.module_type)
+            seen.add(inst.module_type)
+        if duplicates:
+            raise ValueError(
+                f"module_type values must be unique across all instances. "
+                f"Duplicates: {sorted(duplicates)}. "
+                "When the same RTL module is instantiated more than once, "
+                "derive module_type from the instance name (e.g. 'stuff_tx', 'destuff_rx')."
+            )
+        return self

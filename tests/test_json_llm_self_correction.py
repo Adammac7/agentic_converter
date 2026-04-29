@@ -83,6 +83,7 @@ def corrupt_hallucinated_instance(golden: dict) -> RTLStructure:
         "instance_name": "u_fake_dma",
         "module_type": "dma_controller",
         "label": "DMA Controller",
+        "description": "Fake DMA controller for hallucination test",
         "port_mapping": {"clk": "clk", "rst_n": "rst_n", "data": "w_fake"},
     })
     return RTLStructure(**data)
