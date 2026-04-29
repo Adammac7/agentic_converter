@@ -105,6 +105,9 @@ Each instance becomes a `subgraph cluster_<module_type>` inside `cluster_top`.
 Use the `label` field from the JSON directly as the cluster header — do not compute
 or translate it. The Architect has already supplied the human-readable label.
 
+Each cluster contains **exactly one node**: the core node. No port nodes are emitted.
+All edges (inter-module, external I/O, bus) connect directly to the core node.
+
 ```
 subgraph cluster_top {{
     label="<module_name from JSON>";
@@ -118,63 +121,10 @@ subgraph cluster_top {{
         class="<sort_order> abstract_w1.25_h0.9 port_dir_LR";
         margin=12;
 
-        // input port nodes
-        // core node
-        // output port nodes
-        // internal dashed edges
+        <module_type>_core [label="<module_type>", shape=box3d, fillcolor="<FAMILY.CORE>",
+            width=<1.0 if len≤10, 1.2 if 11-16, 1.4 if >16>, height=0.6];
     }}
 }}
-```
-
-### Port direction inference
-
-Apply rules in order; stop at the first rule that gives a definitive answer.
-
-1. If the port key appears in `instances[i].output_ports`, the port is an **output**.
-   (This is the primary source of truth — use it whenever present.)
-2. If the mapped wire name matches a `top_level_ports` entry with `direction: "input"`,
-   or the port key is a global signal (clk, rst_n, rst, reset, scan_en, test_mode),
-   the port is an **input**.
-3. If the mapped wire name matches a `top_level_ports` entry with `direction: "output"`,
-   the port is an **output**.
-4. For internal wires when `output_ports` is empty or missing: build a wire usage table.
-   For each wire shared by multiple instances, the driving instance is the one with the
-   **lower index** in `instances[]` (the array is in dataflow order). All higher-index
-   instances that reference the same wire are **inputs**.
-   Additional heuristic: if the wire name starts with `w_`, the instance whose port key
-   most closely matches the base name (e.g. port `start` → wire `w_start`) is the driver.
-5. If still ambiguous, default to **input**.
-
-### Input port nodes
-
-For each input port in this instance:
-```
-<module_type>_in_<port_key> [label="<label>", shape=box, fillcolor="<FAMILY.INPUT_PORT>",
-    width=<0.9 if bus else 0.7>, height=0.25, fontsize=8, class="input port"];
-```
-
-### Core node
-
-One per instance:
-```
-<module_type>_core [label="<module_type>", shape=box3d, fillcolor="<FAMILY.CORE>",
-    width=<1.0 if len≤10, 1.2 if 11-16, 1.4 if >16>, height=0.6];
-```
-
-### Output port nodes
-
-For each output port in this instance:
-```
-<module_type>_out_<port_key> [label="<label>", shape=box, fillcolor="<FAMILY.OUTPUT_PORT>",
-    width=<0.9 if bus else 0.7>, height=0.25, fontsize=8, class="output port"];
-```
-
-### Internal edges (within the cluster)
-
-All dashed, using the module's wire color:
-```
-<module_type>_in_<port> -> <module_type>_core [style=dashed, color="<FAMILY.WIRE>"];
-<module_type>_core -> <module_type>_out_<port> [style=dashed, color="<FAMILY.WIRE>"];
 ```
 
 ### StyleConfig overrides
@@ -211,7 +161,7 @@ For global signals that fan out to **3 or more** instances (typically clk, rst_n
    <signal>_tap_<mod1> -> <signal>_tap_<mod2> [color="<bus_color>", weight=1, class="bus <type>"];
 
    // taps (into each module): weight=5
-   <signal>_tap_<mod1> -> <mod1>_in_<signal> [color="<bus_color>", weight=5, class="bus <type> port_entry_w"];
+   <signal>_tap_<mod1> -> <mod1>_core [color="<bus_color>", weight=5, class="bus <type>"];
    ```
 
 Signals connecting to only 1-2 instances: wire directly, no relay nodes.
@@ -223,13 +173,13 @@ Signals connecting to only 1-2 instances: wire directly, no relay nodes.
 Derived from shared wire names across `instances[].port_mapping`:
 
 When two instances both have a `port_mapping` value that matches the same
-`internal_wires[].name`, draw an edge from the source instance's output port
-to the destination instance's input port.
+`internal_wires[].name`, draw an edge from the source instance's core node
+to the destination instance's core node.
 
 ```
-<src_module>_out_<port> -> <dest_module>_in_<port> [xlabel="<wire_name>",
+<src_module>_core -> <dest_module>_core [xlabel="<wire_name>",
     color="<wire_color>", weight=<3 if adjacent else 2>,
-    class="crosscluster port_exit_e port_entry_w"];
+    class="crosscluster"];
 ```
 
 ### Wire color assignment
@@ -250,8 +200,8 @@ and/or `style` instead.
 If the source instance has a **higher** index in `instances[]` than the destination
 (signal flows against dataflow order):
 ```
-<src>_out_<port> -> <dest>_in_<port> [xlabel="<wire>", color="#C71585",
-    weight=0, dir=back, class="crosscluster port_exit_w port_entry_e"];
+<src>_core -> <dest>_core [xlabel="<wire>", color="#C71585",
+    weight=0, dir=back, class="crosscluster"];
 ```
 
 ---
@@ -260,9 +210,9 @@ If the source instance has a **higher** index in `instances[]` than the destinat
 
 For each `top_level_port`, find which instance port_mapping value matches the port name:
 
-- Input: `<port_name> -> <module_type>_in_<port_key> [xlabel="w_<port_name>", weight=3, class="crosscluster port_exit_e port_entry_w"];`
+- Input: `<port_name> -> <module_type>_core [xlabel="w_<port_name>", weight=3, class="crosscluster"];`
   (If destination module is not in the first two positions in instances[], use weight=2.)
-- Output: `<module_type>_out_<port_key> -> <port_name>_ext [xlabel="w_<port_name>", weight=<3 if source module is in the last two positions else 2>, class="crosscluster port_exit_e port_entry_w"];`
+- Output: `<module_type>_core -> <port_name>_ext [xlabel="w_<port_name>", weight=<3 if source module is in the last two positions else 2>, class="crosscluster"];`
 
 ---
 
@@ -325,24 +275,18 @@ abstract size from total port count in port_mapping:
 - 11-20 ports: `abstract_w1.5_h0.9`
 - > 20 ports: `abstract_w2.0_h1.2`
 
-### On port nodes:
-```
-class="input port"
-class="output port"
-```
-
 ### On inter-module edges:
 ```
-class="crosscluster port_exit_e port_entry_w"   // forward
-class="crosscluster port_exit_w port_entry_e"   // backward
+class="crosscluster"   // forward
+class="crosscluster"   // backward
 ```
 
 ### On bus edges:
 ```
-class="bus clock"                // trunk
-class="bus clock port_entry_w"   // tap
-class="bus reset"                // trunk
-class="bus reset port_entry_w"   // tap
+class="bus clock"   // trunk
+class="bus clock"   // tap
+class="bus reset"   // trunk
+class="bus reset"   // tap
 ```
 
 ---
@@ -351,9 +295,9 @@ class="bus reset port_entry_w"   // tap
 
 Before returning, verify:
 - No edge uses `label`. All wire names use `xlabel`.
-- Every instance produced exactly one *_core node with shape=box3d.
-- Every port node has class="input port" or class="output port".
-- Global signals (3+ fanout) use the relay pattern.
+- Every instance produced exactly one *_core node with shape=box3d. No port nodes emitted.
+- All inter-module edges connect `_core` nodes, not `_in_` or `_out_` nodes.
+- Global signals (3+ fanout) use the relay pattern with taps connecting to `_core` nodes.
 - Bus port labels show [N-1:0] not [N:0] for multi-bit signals.
 - The digraph name matches module_name from the structure JSON.
 - StyleConfig overrides are applied where present.
