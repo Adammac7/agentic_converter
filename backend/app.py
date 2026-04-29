@@ -22,6 +22,7 @@ GET /static/output/<task_id>.svg
 """
 
 import asyncio
+import json
 import logging
 import shutil
 import tempfile
