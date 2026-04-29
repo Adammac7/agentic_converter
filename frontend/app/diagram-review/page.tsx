@@ -75,9 +75,10 @@ function DiagramReviewContent() {
   const [imgLoadError,   setImgLoadError]   = useState(false);
 
   // Regeneration form
-  const [feedback,       setFeedback]       = useState("");
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [regenError,     setRegenError]     = useState("");
+  const [feedback,         setFeedback]         = useState("");
+  const [isRegenerating,   setIsRegenerating]   = useState(false);
+  const [regenError,       setRegenError]       = useState("");
+  const [regenProgressMsg, setRegenProgressMsg] = useState("");
 
   // Current task id (updated after each regeneration so future regen calls
   // are chained against the most-recent task's stored state).
@@ -90,38 +91,64 @@ function DiagramReviewContent() {
 
     setIsRegenerating(true);
     setRegenError("");
+    setRegenProgressMsg("Submitting feedback…");
 
     try {
+      // POST returns immediately with the new task_id.
       const res = await fetch(`http://localhost:8000/regenerate/${currentTaskId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ edit_prompt: feedback }),
       });
 
-      // Read body ONCE — avoids "body stream already read" if JSON parse fails.
       const rawText = await res.text();
 
       if (!res.ok) {
         let message = `Server error ${res.status}`;
-        try {
-          const errData = JSON.parse(rawText);
-          message = errData?.detail ?? rawText;
-        } catch {
-          message = rawText || message;
-        }
+        try { message = JSON.parse(rawText)?.detail ?? rawText; } catch { message = rawText || message; }
         throw new Error(message);
       }
 
-      const { task_id, svg_url }: { task_id: string; svg_url: string } =
-        JSON.parse(rawText);
+      const { task_id: newTaskId }: { task_id: string } = JSON.parse(rawText);
 
-      setCurrentTaskId(task_id);
-      setImgSrc(`http://localhost:8000${svg_url}`);
-      setImgLoadError(false);
-      setFeedback("");
+      // Open an SSE stream and wait for the terminal event before swapping the image.
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const source = new EventSource(`http://localhost:8000/progress/${newTaskId}`);
+
+        source.onmessage = (e) => setRegenProgressMsg(e.data);
+
+        source.addEventListener("done", (e) => {
+          if (settled) return;
+          settled = true;
+          source.close();
+          const { svg_url } = JSON.parse((e as MessageEvent).data);
+          setCurrentTaskId(newTaskId);
+          setImgSrc(`http://localhost:8000${svg_url}`);
+          setImgLoadError(false);
+          setFeedback("");
+          resolve();
+        });
+
+        source.addEventListener("pipeline_error", (e) => {
+          if (settled) return;
+          settled = true;
+          source.close();
+          const { message } = JSON.parse((e as MessageEvent).data);
+          reject(new Error(message));
+        });
+
+        source.onerror = () => {
+          if (settled) return;
+          settled = true;
+          source.close();
+          reject(new Error("Lost connection to the server while regenerating."));
+        };
+      });
     } catch (err) {
       setRegenError(err instanceof Error ? err.message : "Unexpected error.");
     } finally {
+      setRegenProgressMsg("");
       setIsRegenerating(false);
     }
   };
@@ -244,6 +271,16 @@ function DiagramReviewContent() {
               />
             </div>
 
+            {/* Progress box — visible only while regeneration is running */}
+            {isRegenerating && (
+              <div className="flex items-start gap-3 rounded-lg bg-orange-50 border border-[#FF8200]/40 px-4 py-3">
+                <SpinnerIcon className="h-4 w-4 animate-spin text-[#FF8200] mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-[#002D54]">
+                  {regenProgressMsg || "Starting regeneration…"}
+                </p>
+              </div>
+            )}
+
             {regenError && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
                 {regenError}
@@ -268,7 +305,7 @@ function DiagramReviewContent() {
               {isRegenerating ? (
                 <>
                   <SpinnerIcon className="w-4 h-4 animate-spin" />
-                  Agent is regenerating&hellip;
+                  Processing&hellip;
                 </>
               ) : (
                 <>

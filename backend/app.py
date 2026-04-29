@@ -286,6 +286,68 @@ async def progress_stream(task_id: str):
     )
 
 
+# ── Background regeneration runner ───────────────────────────────────────────
+
+async def _run_regeneration_background(
+    new_task_id: str,
+    source_task: dict,
+    verified_json: dict,
+    merged_style_prompt: str,
+) -> None:
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = _tasks[new_task_id]["progress_queue"]
+
+    def progress_callback(msg: str) -> None:
+        loop.call_soon_threadsafe(q.put_nowait, {"type": "progress", "message": msg})
+
+    session_output_dir = None
+    try:
+        logger.info("Starting background regeneration for task %s", new_task_id)
+        final = await asyncio.to_thread(
+            run_regeneration_pipeline,
+            verified_json,
+            merged_style_prompt,
+            progress_callback=progress_callback,
+        )
+        session_output_dir = final.get("session_output_dir")
+
+        svg = final.get("svg_output")
+        if not svg or not final.get("style_map") or not final.get("dot_source"):
+            raise ValueError("Regeneration produced no SVG output.")
+
+        svg_url = _save_svg(new_task_id, svg)
+        logger.info("Regeneration complete — task %s", new_task_id)
+
+        _tasks[new_task_id].update({
+            "status": "done",
+            "svg_url": svg_url,
+            "cumulative_style_prompt": merged_style_prompt,
+            "style_map": final["style_map"],
+            "dot_source": final["dot_source"],
+        })
+        loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "done", "svg_url": svg_url}
+        )
+
+    except Exception as exc:
+        logger.error("Regeneration failed for task %s:\n%s", new_task_id, traceback.format_exc())
+        _tasks[new_task_id].update({"status": "error", "error": str(exc)})
+        loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "pipeline_error", "message": str(exc)}
+        )
+
+    finally:
+        if session_output_dir:
+            try:
+                cleanup_session_output(session_output_dir)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to cleanup session output %s: %s",
+                    new_task_id,
+                    cleanup_error,
+                )
+
+
 # ── POST /regenerate/{task_id} ────────────────────────────────────────────────
 
 class RegenerateRequest(BaseModel):
@@ -297,9 +359,9 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     """
     Re-style an existing diagram from stored verified_json.
     Skips Architect/Auditor and only runs style->DOT->SVG.
-    The latest edit is merged into a cumulative style prompt so prior edits
-    are preserved unless explicitly overridden.
-    Returns a new { task_id, svg_url }.
+    Registers a new task with a progress queue, spawns the regeneration in
+    the background, and returns {task_id} immediately so the client can
+    connect to /progress/{task_id} for live updates.
     """
     task = _tasks.get(task_id)
     if not task:
@@ -309,65 +371,25 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     if not verified_json:
         raise HTTPException(status_code=500, detail="Task is missing verified_json.")
 
-    cumulative_style_prompt = task.get("cumulative_style_prompt")
-    if cumulative_style_prompt is None:
-        cumulative_style_prompt = task.get("customization_text", "")
-    edit_prompt = body.edit_prompt
-    merged_style_prompt = _merge_style_intent(cumulative_style_prompt, edit_prompt)
+    cumulative_style_prompt = task.get("cumulative_style_prompt") or task.get("customization_text", "")
+    merged_style_prompt = _merge_style_intent(cumulative_style_prompt, body.edit_prompt)
 
-    session_output_dir = None
-    try:
-        logger.info("Regenerating from task %s", task_id)
-        final = await asyncio.to_thread(
-            run_regeneration_pipeline,
-            verified_json,
-            merged_style_prompt,
-        )
-        session_output_dir = final.get("session_output_dir")
-        style_map = final.get("style_map")
-        dot_source = final.get("dot_source")
-        svg = final.get("svg_output")
-
-        if not svg or not style_map or not dot_source:
-            raise ValueError("Regeneration produced no SVG output.")
-
-        new_task_id = str(uuid.uuid4())
-        svg_url     = _save_svg(new_task_id, svg)
-        logger.info("Regeneration complete — new task %s", new_task_id)
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error(
-            "Regeneration failed from task %s:\n%s",
-            task_id,
-            traceback.format_exc(),
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Regeneration error: {type(exc).__name__}: {exc}",
-        ) from exc
-    finally:
-        if session_output_dir:
-            try:
-                cleanup_session_output(session_output_dir)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Failed to cleanup session output %s: %s",
-                    session_output_dir,
-                    cleanup_error,
-                )
-
+    new_task_id = str(uuid.uuid4())
     _tasks[new_task_id] = {
         **task,
+        "status": "running",
+        "progress_queue": asyncio.Queue(),
         "cumulative_style_prompt": merged_style_prompt,
-        "style_map": style_map,
-        "dot_source": dot_source,
-        "svg_url": svg_url,
+        "svg_url": None,
+        "error": None,
     }
 
+    asyncio.create_task(
+        _run_regeneration_background(new_task_id, task, verified_json, merged_style_prompt)
+    )
+
     return JSONResponse(
-        content={"task_id": new_task_id, "svg_url": svg_url},
+        content={"task_id": new_task_id},
         media_type="application/json",
     )
 

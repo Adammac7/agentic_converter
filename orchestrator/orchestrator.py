@@ -507,6 +507,7 @@ def run_regeneration_pipeline(
     output_root: Optional[str] = None,
     session_output_dir: Optional[str] = None,
     ephemeral_session: bool = True,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> dict:
     """
     Regenerate diagram artifacts from an already-verified JSON structure.
@@ -524,12 +525,14 @@ def run_regeneration_pipeline(
     )
     run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
 
+    token = _progress_cb.set(progress_callback)
     try:
         style_map, dot_source = _run_json_to_dot_with_validation(
             verified_json=verified_json,
             user_style_prompt=user_style_prompt,
             run_dir=str(run_dir),
         )
+        _emit("Rendering: converting DOT to SVG via QuickChart…")
         svg_output = render_dot_to_svg(dot_source)
 
         artifacts = {
@@ -595,6 +598,8 @@ def run_regeneration_pipeline(
             error=str(exc),
         )
         raise
+    finally:
+        _progress_cb.reset(token)
 
 
 def export_session_output(session_output_dir: str, export_root: str, label: Optional[str] = None) -> str:
