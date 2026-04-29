@@ -24,6 +24,7 @@ from agents.architect.agent import run_architect_agent
 from agents.auditor.agent import run_auditor_agent
 from agents.stylist.agent import run_stylist_agent
 from agents.dot_compiler.agent import run_dot_compiler_agent
+from agents.config import TokenUsageTracker
 from tools.graphviz_quickchart import render_dot_to_svg, GraphvizRenderError
 
 
@@ -324,6 +325,9 @@ def dot_to_graph(state: PipelineState) -> dict:
         return {"svg_output": svg}
     except GraphvizRenderError as e:
         print(f"[dot_to_graph] Render error: {e}")
+        if e.body:
+            print(f"[dot_to_graph] API response: {e.body}")
+        print(f"[dot_to_graph] DOT source that failed:\n{state['dot_source']}")
         raise
 
 
@@ -404,6 +408,7 @@ def run_pipeline(
     )
 
     app = build_graph().compile()
+    tracker = TokenUsageTracker()
 
     initial_state: PipelineState = {
         "rtl_code":          rtl_code,
@@ -418,7 +423,9 @@ def run_pipeline(
         "run_dir":           str(run_dir),
     }
     try:
-        result = app.invoke(initial_state)
+        result = app.invoke(initial_state, config={"callbacks": [tracker]})
+
+        tracker.print_summary()
 
         artifacts = {
             "rtl": _store_artifact(session_dir, "rtl", "sv", rtl_code),
