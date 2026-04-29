@@ -115,7 +115,13 @@ def test_port_wrong_type(field, bad_value):
 def test_logic_block_missing_port_mapping():
     """The #1 LLM failure mode: omitting port_mapping entirely."""
     with pytest.raises(ValidationError):
-        LogicBlock(instance_name="u_ctrl", module_type="ctrl")
+        LogicBlock(instance_name="u_ctrl", module_type="ctrl", label="Controller")
+
+
+def test_logic_block_missing_label():
+    """LLM omits the human-readable label field."""
+    with pytest.raises(ValidationError):
+        LogicBlock(instance_name="u_ctrl", module_type="ctrl", port_mapping={"clk": "clk"})
 
 
 def test_logic_block_port_mapping_wrong_type():
@@ -124,23 +130,24 @@ def test_logic_block_port_mapping_wrong_type():
         LogicBlock(
             instance_name="u_ctrl",
             module_type="ctrl",
+            label="Controller",
             port_mapping=[("clk", "clk")],
         )
 
 
 def test_logic_block_missing_instance_name():
     with pytest.raises(ValidationError):
-        LogicBlock(module_type="ctrl", port_mapping={"clk": "clk"})
+        LogicBlock(module_type="ctrl", label="Controller", port_mapping={"clk": "clk"})
 
 
 def test_logic_block_missing_module_type():
     with pytest.raises(ValidationError):
-        LogicBlock(instance_name="u_ctrl", port_mapping={"clk": "clk"})
+        LogicBlock(instance_name="u_ctrl", label="Controller", port_mapping={"clk": "clk"})
 
 
 def test_logic_block_empty_port_mapping_parses():
     """Empty port_mapping is schema-valid (auditor catches the semantic error)."""
-    block = LogicBlock(instance_name="u_ctrl", module_type="ctrl", port_mapping={})
+    block = LogicBlock(instance_name="u_ctrl", module_type="ctrl", label="Controller", port_mapping={})
     assert block.port_mapping == {}
 
 
@@ -150,6 +157,7 @@ def test_logic_block_nested_port_mapping_rejected():
         LogicBlock(
             instance_name="u_ctrl",
             module_type="ctrl",
+            label="Controller",
             port_mapping={"clk": {"wire": "clk", "width": 1}},
         )
 

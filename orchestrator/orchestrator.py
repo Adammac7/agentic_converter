@@ -168,7 +168,7 @@ def rtl_to_json(state: PipelineState) -> dict:
 
     # Step 1 & 2 — Architect / Auditor retry loop
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f"[rtl_to_json_to_dot] Attempt {attempt}/{MAX_ATTEMPTS}")
+        print(f"[rtl_to_json] Attempt {attempt}/{MAX_ATTEMPTS}")
         iter_dir = Path(state["run_dir"]) / "iterations" / f"iter_{attempt:02d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
 
@@ -201,7 +201,16 @@ def rtl_to_json(state: PipelineState) -> dict:
             verified_json = architect_result.model_dump()
             break
         else:
-            feedback = f"CRITICAL FEEDBACK FROM AUDITOR: {audit_report.feedback}"
+            missing_csv = ", ".join(audit_report.missing_items) if audit_report.missing_items else "none"
+            hallucinations_csv = ", ".join(audit_report.hallucinations) if audit_report.hallucinations else "none"
+            feedback = (
+                "CRITICAL FEEDBACK FROM AUDITOR\n"
+                f"MISSING=[{missing_csv}]\n"
+                f"HALLUCINATIONS=[{hallucinations_csv}]\n"
+                f"DETAIL={audit_report.feedback}\n"
+                "ACTION=Keep all correct existing entries unchanged. "
+                "Only add missing RTL-grounded items and remove true hallucinations."
+            )
             print("  [Auditor] Invalid — retrying.")
         _write_text(iter_dir / "feedback.txt", feedback)
 

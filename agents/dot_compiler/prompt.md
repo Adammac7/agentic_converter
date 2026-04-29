@@ -101,7 +101,9 @@ External output node IDs get an `_ext` suffix to avoid collision with internal s
 Build from `instances[]` in the structure JSON. Process them **in array order** —
 this order represents dataflow and controls left-to-right placement.
 
-Each instance becomes a `subgraph cluster_<module_type>` inside `cluster_top`:
+Each instance becomes a `subgraph cluster_<module_type>` inside `cluster_top`.
+Use the `label` field from the JSON directly as the cluster header — do not compute
+or translate it. The Architect has already supplied the human-readable label.
 
 ```
 subgraph cluster_top {{
@@ -111,9 +113,9 @@ subgraph cluster_top {{
     // bus relay nodes go here (see BUS RELAY section)
 
     subgraph cluster_<module_type> {{
-        label="<instance_name>  (<module_type>)";
+        label="<instances[i].label>\n<instance_name>";
         style=filled; color=black; fillcolor="<FAMILY.CLUSTER>";
-        class="<func_type> <sort_order> abstract_w1.25_h0.9 port_dir_LR";
+        class="<sort_order> abstract_w1.25_h0.9 port_dir_LR";
         margin=12;
 
         // input port nodes
@@ -126,20 +128,22 @@ subgraph cluster_top {{
 
 ### Port direction inference
 
-The `port_mapping` dict has no direction info. Determine direction for each port key:
+Apply rules in order; stop at the first rule that gives a definitive answer.
 
-1. If the mapped wire name matches a `top_level_ports` entry with `direction: "input"`,
-   or the port key matches a global signal name (clk, rst_n, rst, reset, scan_en,
-   test_mode), the port is an **input**.
-2. If the mapped wire name matches a `top_level_ports` entry with `direction: "output"`,
+1. If the port key appears in `instances[i].output_ports`, the port is an **output**.
+   (This is the primary source of truth — use it whenever present.)
+2. If the mapped wire name matches a `top_level_ports` entry with `direction: "input"`,
+   or the port key is a global signal (clk, rst_n, rst, reset, scan_en, test_mode),
+   the port is an **input**.
+3. If the mapped wire name matches a `top_level_ports` entry with `direction: "output"`,
    the port is an **output**.
-3. For internal wires: build a wire usage table across all instances. The single
-   instance that **drives** a wire (the source) has that port as an **output**.
-   All other instances connected to the same wire have it as an **input**.
-   Heuristic: if a wire name starts with `w_`, the instance whose port_mapping
-   key most closely matches the signal's base name (e.g. port `start` mapping to
-   `w_start`) is likely the driver.
-4. If still ambiguous, default to **input**.
+4. For internal wires when `output_ports` is empty or missing: build a wire usage table.
+   For each wire shared by multiple instances, the driving instance is the one with the
+   **lower index** in `instances[]` (the array is in dataflow order). All higher-index
+   instances that reference the same wire are **inputs**.
+   Additional heuristic: if the wire name starts with `w_`, the instance whose port key
+   most closely matches the base name (e.g. port `start` → wire `w_start`) is the driver.
+5. If still ambiguous, default to **input**.
 
 ### Input port nodes
 
@@ -153,7 +157,7 @@ For each input port in this instance:
 
 One per instance:
 ```
-<module_type>_core [label="<module_type>\ncore", shape=box3d, fillcolor="<FAMILY.CORE>",
+<module_type>_core [label="<module_type>", shape=box3d, fillcolor="<FAMILY.CORE>",
     width=<1.0 if len≤10, 1.2 if 11-16, 1.4 if >16>, height=0.6];
 ```
 
@@ -311,19 +315,8 @@ interactive viewers that support collapse/expand.
 
 ### On sub-module clusters:
 ```
-class="<func_type> <sort_order> abstract_w<W>_h<H> port_dir_LR"
+class="<sort_order> abstract_w<W>_h<H> port_dir_LR"
 ```
-
-func_type inference from module_type string:
-- Contains ctrl/fsm/state -> `control`
-- Contains mem/ram/rom/cache -> `memory`
-- Contains fifo/buf/queue -> `buffer`
-- Contains data/alu/mul/div/add -> `datapath`
-- Contains fmt/out/tx/encode -> `output`
-- Contains dec/rx/in -> `input`
-- Contains clk/pll/osc -> `clock`
-- Contains arb/mux/switch -> `arbiter`
-- Otherwise -> `logic`
 
 sort_order = (instance_index + 1) * 1000
 

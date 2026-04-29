@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 
 class Port(BaseModel):
@@ -19,18 +19,35 @@ class Port(BaseModel):
 
 class LogicBlock(BaseModel):
     """
-    Represents an instantiation of a sub-module within the design.
-    Each instance becomes a 'node' (box) in the generated DOT diagram.
+    Represents a functional block within the design — either an explicit sub-module
+    instantiation (hierarchical RTL) or a virtual block grouping related always/assign
+    logic (flat behavioral RTL). Each block becomes a cluster box in the DOT diagram.
     """
 
-    instance_name: str = Field(description="The name of the instance (e.g., 'u_ctrl')")
+    instance_name: str = Field(description="The name of the instance or virtual block (e.g., 'u_ctrl', 'u_wr_ctrl')")
     module_type: str = Field(
-        description="The name of the module being used (e.g., 'ctrl')"
+        description="Short snake_case identifier used for DOT node IDs; must be unique across all instances (e.g., 'ctrl', 'wr_ctrl')"
+    )
+    block_kind: Literal["instantiated", "virtual"] = Field(
+        default="virtual",
+        description="Whether this block comes from explicit RTL instantiation or inferred functional grouping"
+    )
+    label: str = Field(
+        description="Human-readable name describing this block's function, used as the diagram cluster header (e.g., 'Write Controller', 'Memory Array', 'SPI Clock Divider')"
     )
     port_mapping: Dict[str, str] = Field(
         description=(
             "A simple flat dictionary where the KEY is the module port name and "
             "the VALUE is the connected wire name. Example: {'clk': 'clk', 'start': 'w_start'}"
+        )
+    )
+    output_ports: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of port keys from port_mapping that are OUTPUTS of this block. "
+            "For instantiated blocks, derive from the sub-module's 'output' port declarations. "
+            "For virtual blocks, list port keys whose wire is driven/written by this block. "
+            "Example: ['data_out', 'valid', 'mem_ack']"
         )
     )
 

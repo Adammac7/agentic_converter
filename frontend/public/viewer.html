@@ -137,37 +137,22 @@
           if (nested) Object.assign(nodeInfo, collectNodeInfo(nested.content));
         }
 
-        const inputs = [];
-        const outputs = [];
-        const coreIds = [];
-        for (const [id, nodeLabel] of Object.entries(nodeInfo)) {
-          if (/_in_/.test(id)) inputs.push({ id, label: nodeLabel });
-          else if (/_out_/.test(id)) outputs.push({ id, label: nodeLabel });
-          else coreIds.push(id);
-        }
-
         const placeholder = `${clusterName}_collapsed`;
-        const inCells = inputs.map((p, i) => `<in_${i}>${escRecord(p.label)}`).join("|");
-        const outCells = outputs.map((p, i) => `<out_${i}>${escRecord(p.label)}`).join("|");
 
-        const parts = [];
-        if (inCells) parts.push(`{${inCells}}`);
-        parts.push(`${escRecord(label)}\\n[+]`);
-        if (outCells) parts.push(`{${outCells}}`);
-        const recordLabel = `{${parts.join("|")}}`;
-
-        const replacement = `${placeholder} [label="${recordLabel}", shape=record, style=filled, fillcolor="${clusterFill}", color=black, fontsize=8, fontname="Helvetica"];`;
+        // Plain box — all edges from any port route to the single proxy box
+        // Use raw label (preserving \n DOT newline); escRecord is for record syntax only
+        const safeLabel = label.replace(/"/g, '\\"');
+        const replacement = `${placeholder} [label="${safeLabel}\\n[+]", shape=box, style=filled, fillcolor="${clusterFill}", color=black, fontsize=10, fontname="Helvetica"];`;
 
         const portMap = {};
-        inputs.forEach((p, i) => { portMap[p.id] = `${placeholder}:in_${i}:w`; });
-        outputs.forEach((p, i) => { portMap[p.id] = `${placeholder}:out_${i}:e`; });
-        coreIds.forEach((id) => { portMap[id] = placeholder; });
+        Object.keys(nodeInfo).forEach((id) => { portMap[id] = placeholder; });
 
         const nodeIds = new Set(Object.keys(nodeInfo));
         dot = dot.replace(block.full, replacement);
 
         const lines = dot.split("\n");
-        const seen = new Set();
+        // edgeMap consolidates parallel edges between the same (src, target, dir) pair
+        const edgeMap = new Map();
         const result = [];
 
         for (const line of lines) {
@@ -204,19 +189,110 @@
             tgtReplaced = true;
           }
 
-          if (srcReplaced && tgtReplaced) continue;
+          // Skip internal edges (both endpoints inside the same collapsed cluster)
+          if (srcReplaced && tgtReplaced && source === target) continue;
 
-          const attrMatch = rest.match(/^\[(.+)\]$/);
-          const newLine = attrMatch
-            ? `    ${source} -> ${target} [${attrMatch[1].trim()}];`
-            : `    ${source} -> ${target};`;
+          // Pass through fully-expanded edges unchanged
+          if (!srcReplaced && !tgtReplaced) {
+            result.push(line);
+            continue;
+          }
 
-          if (seen.has(newLine.trim())) continue;
-          seen.add(newLine.trim());
-          result.push(newLine);
+          // Consolidate by (source, target, dir) — keep forward/backward edges separate
+          const dirMatch = rest.match(/\bdir\s*=\s*(\w+)/);
+          const dir = dirMatch ? dirMatch[1] : "";
+          const pairKey = `${source}|${target}|${dir}`;
+
+          const xlabelMatch = rest.match(/xlabel\s*=\s*"([^"]+)"/);
+          const wireName = xlabelMatch ? xlabelMatch[1] : null;
+
+          if (!edgeMap.has(pairKey)) {
+            edgeMap.set(pairKey, { source, target, rest, wires: wireName ? [wireName] : [] });
+          } else if (wireName) {
+            edgeMap.get(pairKey).wires.push(wireName);
+          }
         }
 
+        // Build consolidated edge lines — strip xlabel (floats randomly with splines=ortho)
+        const edgeLines = [];
+        for (const [, { source, target, rest }] of edgeMap) {
+          const cleanRest = rest
+            .replace(/,?\s*xlabel\s*=\s*"[^"]*"/, "")
+            .replace(/\[\s*,\s*/, "[")
+            .trim();
+          edgeLines.push(cleanRest ? `    ${source} -> ${target} ${cleanRest};` : `    ${source} -> ${target};`);
+        }
+
+        // Splice edges before the last "}" so they land inside the digraph block
+        let insertIdx = result.length;
+        for (let i = result.length - 1; i >= 0; i--) {
+          if (result[i].trim() === "}") { insertIdx = i; break; }
+        }
+        result.splice(insertIdx, 0, ...edgeLines);
+
         dot = result.join("\n");
+      }
+
+      // Post-collapse: strip bus relay tap nodes and re-emit direct signal→box edges.
+      // Only runs in full overview mode to avoid breaking partially-expanded views.
+      const allLeafNonExt = getLeafClusters(dotSource).filter((n) => n !== "cluster_ext_in" && n !== "cluster_ext_out");
+      if (allLeafNonExt.length > 0 && allLeafNonExt.every((n) => collapsedClusters.has(n))) {
+        const tapNodes = new Set();
+        const tapRe = /^\s*(\w*_tap_\w+)\s*\[/gm;
+        let tapM;
+        while ((tapM = tapRe.exec(dot)) !== null) tapNodes.add(tapM[1]);
+
+        if (tapNodes.size > 0) {
+          const tapUpstream = new Map(); // tap → its upstream node (signal or prior tap)
+          const tapToBox = [];           // {tap, box, color} for tap→collapsed edges
+
+          for (const line of dot.split("\n")) {
+            const t = line.trim();
+            const em = t.match(/^(\w+)\s*->\s*(\w+)\s*(\[.*\])?/);
+            if (!em) continue;
+            const [, src, tgt, attrs = ""] = em;
+            if (tapNodes.has(tgt)) tapUpstream.set(tgt, src);
+            if (tapNodes.has(src) && !tapNodes.has(tgt)) {
+              const colorM = attrs.match(/color\s*=\s*"([^"]+)"/);
+              tapToBox.push({ tap: src, box: tgt, color: colorM ? colorM[1] : "#666666" });
+            }
+          }
+
+          // Trace each tap back to its original signal source (before any tap chain)
+          const seenPairs = new Set();
+          const directEdges = [];
+          for (const { tap, box, color } of tapToBox) {
+            let signal = tap;
+            while (tapNodes.has(signal)) {
+              const up = tapUpstream.get(signal);
+              if (up === undefined) break;
+              signal = up;
+            }
+            const pair = `${signal}|${box}`;
+            if (!seenPairs.has(pair)) {
+              seenPairs.add(pair);
+              directEdges.push(`    ${signal} -> ${box} [color="${color}"];`);
+            }
+          }
+
+          // Remove tap node declarations and all edges touching a tap node
+          const cleanLines = dot.split("\n").filter((line) => {
+            const t = line.trim();
+            const nodeM = t.match(/^(\w+)\s*\[/);
+            if (nodeM && tapNodes.has(nodeM[1])) return false;
+            const edgeM = t.match(/^(\w+)\s*->\s*(\w+)/);
+            if (edgeM && (tapNodes.has(edgeM[1]) || tapNodes.has(edgeM[2]))) return false;
+            return true;
+          });
+
+          // Splice direct edges inside the digraph block
+          let insertAt = cleanLines.length;
+          for (let i = cleanLines.length - 1; i >= 0; i--) {
+            if (cleanLines[i].trim() === "}") { insertAt = i; break; }
+          }
+          cleanLines.splice(insertAt, 0, ...directEdges);
+          dot = cleanLines.join("\n");
+        }
       }
 
       return dot;
@@ -318,11 +394,13 @@
 
     window.expandAll = () => { collapsedClusters.clear(); render(); };
     window.collapseAll = () => {
-      getLeafClusters(dotSource).forEach((n) => collapsedClusters.add(n));
+      getLeafClusters(dotSource)
+        .filter((n) => n !== "cluster_ext_in" && n !== "cluster_ext_out")
+        .forEach((n) => collapsedClusters.add(n));
       render();
     };
 
-    render();
+    collapseAll();
   </script>
 </body>
 </html>
