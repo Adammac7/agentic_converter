@@ -25,6 +25,7 @@ from agents.architect.agent import run_architect_agent
 from agents.auditor.agent import run_auditor_agent
 from agents.stylist.agent import run_stylist_agent
 from agents.dot_compiler.agent import run_dot_compiler_agent
+from agents.config import TokenUsageTracker
 from tools.graphviz_quickchart import render_dot_to_svg, GraphvizRenderError
 
 
@@ -182,7 +183,7 @@ def rtl_to_json(state: PipelineState) -> dict:
 
     # Step 1 & 2 — Architect / Auditor retry loop
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f"[rtl_to_json_to_dot] Attempt {attempt}/{MAX_ATTEMPTS}")
+        print(f"[rtl_to_json] Attempt {attempt}/{MAX_ATTEMPTS}")
         iter_dir = Path(state["run_dir"]) / "iterations" / f"iter_{attempt:02d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
 
@@ -217,8 +218,16 @@ def rtl_to_json(state: PipelineState) -> dict:
             verified_json = architect_result.model_dump()
             break
         else:
-            feedback = f"CRITICAL FEEDBACK FROM AUDITOR: {audit_report.feedback}"
-            _emit("Auditor: found issues — retrying with feedback…")
+            missing_csv = ", ".join(audit_report.missing_items) if audit_report.missing_items else "none"
+            hallucinations_csv = ", ".join(audit_report.hallucinations) if audit_report.hallucinations else "none"
+            feedback = (
+                "CRITICAL FEEDBACK FROM AUDITOR\n"
+                f"MISSING=[{missing_csv}]\n"
+                f"HALLUCINATIONS=[{hallucinations_csv}]\n"
+                f"DETAIL={audit_report.feedback}\n"
+                "ACTION=Keep all correct existing entries unchanged. "
+                "Only add missing RTL-grounded items and remove true hallucinations."
+            )
             print("  [Auditor] Invalid — retrying.")
         _write_text(iter_dir / "feedback.txt", feedback)
 
@@ -338,6 +347,9 @@ def dot_to_graph(state: PipelineState) -> dict:
         return {"svg_output": svg}
     except GraphvizRenderError as e:
         print(f"[dot_to_graph] Render error: {e}")
+        if e.body:
+            print(f"[dot_to_graph] API response: {e.body}")
+        print(f"[dot_to_graph] DOT source that failed:\n{state['dot_source']}")
         raise
 
 
@@ -414,6 +426,7 @@ def run_pipeline(
     run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
 
     app = build_graph().compile()
+    tracker = TokenUsageTracker()
 
     initial_state: PipelineState = {
         "rtl_code":          rtl_code,
@@ -432,7 +445,9 @@ def run_pipeline(
     # The token is reset in the finally clause so the var is always cleaned up.
     token = _progress_cb.set(progress_callback)
     try:
-        result = app.invoke(initial_state)
+        result = app.invoke(initial_state, config={"callbacks": [tracker]})
+
+        tracker.print_summary()
 
         artifacts = {
             "rtl": _store_artifact(session_dir, "rtl", "sv", rtl_code),

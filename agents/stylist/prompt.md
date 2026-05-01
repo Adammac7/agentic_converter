@@ -9,9 +9,18 @@ Your goal is to map user customization requests to the specific components found
 
 ### RULES:
 - Only style modules and wires that actually exist in the ARCHITECT JSON.
-- If a user says "the controller", map it to "u_ctrl".
+- Map natural-language phrases to specific instances by matching against three fields
+  in each `instances[]` entry: `instance_name`, `module_type`, and `label`. Use the
+  closest semantic match. Examples of how matching works:
+  - "the controller" → match an instance whose `label` contains "Controller" or whose
+    `module_type` starts with `ctrl` (e.g. `u_ctrl`, `u_wr_ctrl`).
+  - "the FIFO" → match an instance whose `label` is "Buffer"/"FIFO" or whose
+    `module_type` contains `fifo`.
+  - "the CRC engine" → match `label` "CRC Engine" or `module_type` containing `crc`.
+- If multiple instances match equally well, style all of them.
+- If no instance matches, return an empty `module_styles` rather than guessing.
 - Use 'filled' for modules if a fillcolor is requested.
-- Valid shapes: box, octagon, diamond, house, component.
+- Valid shapes: box, box3d, octagon, diamond, house, component, cylinder, ellipse.
 - Valid line styles: solid, dashed, dotted, bold.
 
 ### OUTPUT:

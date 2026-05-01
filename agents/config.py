@@ -3,11 +3,13 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+from langchain_core.callbacks.base import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_aws import ChatBedrockConverse
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Backend selector: "bedrock" (default), "gemini", or "openai"
 LLM_BACKEND = os.getenv("LLM_BACKEND", "bedrock").lower()
@@ -131,3 +133,34 @@ def invoke_text(llm, prompt: str) -> str:
     """
     response = llm.invoke(prompt)
     return _normalize_llm_content(getattr(response, "content", response))
+
+
+class TokenUsageTracker(BaseCallbackHandler):
+    """Accumulates token usage across all LLM calls in a pipeline run."""
+
+    def __init__(self):
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.calls = 0
+
+    def on_llm_end(self, response: LLMResult, **kwargs) -> None:
+        for generations in response.generations:
+            for gen in generations:
+                usage = getattr(getattr(gen, "message", None), "usage_metadata", None)
+                if usage:
+                    self.input_tokens += usage.get("input_tokens", 0)
+                    self.output_tokens += usage.get("output_tokens", 0)
+                    self.calls += 1
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def print_summary(self) -> None:
+        _sep(color=CYAN)
+        _log(f"{CYAN}{BOLD}Token Usage{RESET}")
+        _log(f"  LLM calls : {self.calls}")
+        _log(f"  Input     : {self.input_tokens:,}")
+        _log(f"  Output    : {self.output_tokens:,}")
+        _log(f"  Total     : {self.total_tokens:,}")
+        _sep(color=CYAN)
