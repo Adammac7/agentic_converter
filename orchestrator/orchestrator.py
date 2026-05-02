@@ -13,10 +13,11 @@ import json
 import re
 import shutil
 import tempfile
+from contextvars import ContextVar
 from hashlib import sha256
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict, Optional
+from typing import Callable, Optional, TypedDict
 
 from langgraph.graph import StateGraph, END
 
@@ -30,6 +31,19 @@ from tools.graphviz_quickchart import render_dot_to_svg, GraphvizRenderError
 
 MAX_ATTEMPTS = 3
 MAX_DIAGRAM_ATTEMPTS = 3
+
+# Holds an optional callable(str) that each node can call to push progress
+# messages to the caller. Using ContextVar means it is thread-safe and is
+# automatically copied into the worker thread by asyncio.to_thread.
+_progress_cb: ContextVar[Optional[Callable[[str], None]]] = ContextVar(
+    "_progress_cb", default=None
+)
+
+
+def _emit(msg: str) -> None:
+    cb = _progress_cb.get()
+    if cb:
+        cb(msg)
 
 
 def _sanitize_label(label: str) -> str:
@@ -173,6 +187,7 @@ def rtl_to_json(state: PipelineState) -> dict:
         iter_dir = Path(state["run_dir"]) / "iterations" / f"iter_{attempt:02d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
 
+        _emit(f"Architect — attempt {attempt}/{MAX_ATTEMPTS}: parsing RTL structure…")
         try:
             architect_result = run_architect_agent(state["rtl_code"], feedback=feedback)
             json_str = json.dumps(architect_result.model_dump(), indent=2)
@@ -183,6 +198,7 @@ def rtl_to_json(state: PipelineState) -> dict:
             print(f"  [Architect error] {e}")
             continue
 
+        _emit(f"Auditor — attempt {attempt}/{MAX_ATTEMPTS}: validating output…")
         try:
             audit_report = run_auditor_agent(state["rtl_code"], json_str)
             _write_json(iter_dir / "auditor_report.json", audit_report.model_dump())
@@ -243,6 +259,7 @@ def _run_json_to_dot_with_validation(
                 f"CRITICAL DIAGRAM FEEDBACK: {style_feedback}"
             )
 
+        _emit(f"Stylist — attempt {diagram_attempt}/{MAX_DIAGRAM_ATTEMPTS}: applying style preferences…")
         try:
             style_result = run_stylist_agent(
                 architect_json=json.dumps(verified_json, indent=2),
@@ -256,6 +273,7 @@ def _run_json_to_dot_with_validation(
             print(f"  [Stylist error] {e}")
             continue
 
+        _emit(f"DOT Compiler — attempt {diagram_attempt}/{MAX_DIAGRAM_ATTEMPTS}: building graph source…")
         try:
             dot_source = run_dot_compiler_agent(verified_json, style_dict)
             _write_text(diagram_iter_dir / "dot.dot", dot_source or "")
@@ -273,6 +291,7 @@ def _run_json_to_dot_with_validation(
 
         style_feedback = validation_message
         last_validation_error = validation_message
+        _emit("DOT Compiler: invalid output — retrying…")
         print(f"  [Diagram invalid] {validation_message}")
 
     if not style_dict or not dot_source:
@@ -321,6 +340,7 @@ def dot_to_graph(state: PipelineState) -> dict:
     """
     Converts the DOT source into an SVG string via the QuickChart Graphviz API.
     """
+    _emit("Rendering: converting DOT to SVG via QuickChart…")
     try:
         svg = render_dot_to_svg(state["dot_source"])
         print("[dot_to_graph] SVG rendered successfully.")
@@ -390,6 +410,7 @@ def run_pipeline(
     output_root: Optional[str] = None,
     session_output_dir: Optional[str] = None,
     ephemeral_session: bool = True,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> PipelineState:
     """Compile and run the graph; return the final state."""
     started_at = datetime.now()
@@ -419,6 +440,10 @@ def run_pipeline(
         "run_id":            run_id,
         "run_dir":           str(run_dir),
     }
+    # Bind the caller-supplied callback into the ContextVar so every node
+    # function can call _emit() without needing it passed through graph state.
+    # The token is reset in the finally clause so the var is always cleaned up.
+    token = _progress_cb.set(progress_callback)
     try:
         result = app.invoke(initial_state, config={"callbacks": [tracker]})
 
@@ -486,6 +511,8 @@ def run_pipeline(
             error=str(exc),
         )
         raise
+    finally:
+        _progress_cb.reset(token)
 
 
 def run_regeneration_pipeline(
@@ -495,6 +522,7 @@ def run_regeneration_pipeline(
     output_root: Optional[str] = None,
     session_output_dir: Optional[str] = None,
     ephemeral_session: bool = True,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> dict:
     """
     Regenerate diagram artifacts from an already-verified JSON structure.
@@ -512,12 +540,14 @@ def run_regeneration_pipeline(
     )
     run_id, run_dir = _create_run_dir(session_dir=session_dir, run_label=session_label)
 
+    token = _progress_cb.set(progress_callback)
     try:
         style_map, dot_source = _run_json_to_dot_with_validation(
             verified_json=verified_json,
             user_style_prompt=user_style_prompt,
             run_dir=str(run_dir),
         )
+        _emit("Rendering: converting DOT to SVG via QuickChart…")
         svg_output = render_dot_to_svg(dot_source)
 
         artifacts = {
@@ -583,6 +613,8 @@ def run_regeneration_pipeline(
             error=str(exc),
         )
         raise
+    finally:
+        _progress_cb.reset(token)
 
 
 def export_session_output(session_output_dir: str, export_root: str, label: Optional[str] = None) -> str:
