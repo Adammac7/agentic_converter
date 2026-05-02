@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.s3_artifacts import load_s3_artifact_config, upload_run_artifacts_to_s3
 from orchestrator.orchestrator import (
     cleanup_session_output,
     run_pipeline,
@@ -307,6 +308,7 @@ async def _run_regeneration_background(
             run_regeneration_pipeline,
             verified_json,
             merged_style_prompt,
+            run_id=new_task_id,
             progress_callback=progress_callback,
         )
         session_output_dir = final.get("session_output_dir")
@@ -329,6 +331,18 @@ async def _run_regeneration_background(
             q.put_nowait, {"type": "done", "svg_url": svg_url}
         )
 
+        s3_cfg = load_s3_artifact_config()
+        if s3_cfg:
+            upload_run_artifacts_to_s3(
+                s3_cfg,
+                new_task_id,
+                rtl_code=source_task.get("rtl_code") or "",
+                verified_json=final["verified_json"],
+                style_map=final["style_map"],
+                dot_source=final["dot_source"] or "",
+                svg_output=svg,
+            )
+
     except Exception as exc:
         logger.error("Regeneration failed for task %s:\n%s", new_task_id, traceback.format_exc())
         _tasks[new_task_id].update({"status": "error", "error": str(exc)})
@@ -343,7 +357,7 @@ async def _run_regeneration_background(
             except Exception as cleanup_error:
                 logger.warning(
                     "Failed to cleanup session output %s: %s",
-                    new_task_id,
+                    session_output_dir,
                     cleanup_error,
                 )
 
