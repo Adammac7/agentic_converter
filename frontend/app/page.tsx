@@ -149,6 +149,7 @@ export default function Page() {
   const [form, setForm] = useState<FormState>({ file: null, customizationText: "" });
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [progressMsg, setProgressMsg] = useState("");
 
   const setFile = useCallback((f: File) => setForm((p) => ({ ...p, file: f })), []);
 
@@ -162,6 +163,7 @@ export default function Page() {
     }
 
     setStatus("loading");
+    setProgressMsg("Uploading file…");
     setErrorMsg("");
 
     try {
@@ -169,32 +171,58 @@ export default function Page() {
       body.append("rtl_file", form.file);
       body.append("customization_text", form.customizationText);
 
+      // POST returns immediately with {task_id}; the pipeline runs in the background.
       const res = await fetch("http://localhost:8000/upload-rtl", { method: "POST", body });
-
-      // Read the body ONCE as text, then parse — avoids "body stream already
-      // read" that occurs when res.json() throws and a catch calls res.text().
       const rawText = await res.text();
 
       if (!res.ok) {
         let message = `Server error ${res.status}`;
-        try {
-          const errData = JSON.parse(rawText);
-          message = errData?.detail ?? rawText;
-        } catch {
-          message = rawText || message;
-        }
+        try { message = JSON.parse(rawText)?.detail ?? rawText; } catch { message = rawText || message; }
         throw new Error(message);
       }
 
-      const { task_id, svg_url }: { task_id: string; svg_url: string } =
-        JSON.parse(rawText);
+      const { task_id }: { task_id: string } = JSON.parse(rawText);
 
-      const imgUrl = `http://localhost:8000${svg_url}`;
+      // Open an SSE stream and wait for the terminal event before navigating.
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const source = new EventSource(`http://localhost:8000/progress/${task_id}`);
 
-      router.push(
-        `/diagram-review?task_id=${encodeURIComponent(task_id)}&img_url=${encodeURIComponent(imgUrl)}`
-      );
+        // Plain `data:` lines carry per-stage progress strings from _emit().
+        source.onmessage = (e) => setProgressMsg(e.data);
+
+        // Terminal success event — server sends svg_url so we can navigate.
+        source.addEventListener("done", (e) => {
+          if (settled) return;
+          settled = true;
+          source.close();
+          const { svg_url } = JSON.parse((e as MessageEvent).data);
+          const imgUrl = `http://localhost:8000${svg_url}`;
+          router.push(
+            `/diagram-review?task_id=${encodeURIComponent(task_id)}&img_url=${encodeURIComponent(imgUrl)}`
+          );
+          resolve();
+        });
+
+        // Terminal error event — server sends a message string from the exception.
+        source.addEventListener("pipeline_error", (e) => {
+          if (settled) return;
+          settled = true;
+          source.close();
+          const { message } = JSON.parse((e as MessageEvent).data);
+          reject(new Error(message));
+        });
+
+        // Connection-level error (network drop, server crash, etc.).
+        source.onerror = () => {
+          if (settled) return;
+          settled = true;
+          source.close();
+          reject(new Error("Lost connection to the server while processing."));
+        };
+      });
     } catch (err) {
+      setProgressMsg("");
       setErrorMsg(err instanceof Error ? err.message : "Unexpected error.");
       setStatus("error");
     }
@@ -259,6 +287,16 @@ export default function Page() {
               />
             </div>
 
+            {/* Progress box — visible only while the pipeline is running */}
+            {status === "loading" && (
+              <div className="flex items-start gap-3 rounded-lg bg-orange-50 border border-[#FF8200]/40 px-4 py-3">
+                <SpinnerIcon className="h-4 w-4 animate-spin text-[#FF8200] mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-[#002D54]">
+                  {progressMsg || "Starting pipeline…"}
+                </p>
+              </div>
+            )}
+
             {/* Error banner */}
             {status === "error" && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
@@ -284,7 +322,7 @@ export default function Page() {
               {status === "loading" ? (
                 <>
                   <SpinnerIcon className="h-4 w-4 animate-spin" />
-                  Agent is processing&hellip;
+                  Processing&hellip;
                 </>
               ) : (
                 "Generate Diagram"

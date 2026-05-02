@@ -22,6 +22,7 @@ GET /static/output/<task_id>.svg
 """
 
 import asyncio
+import json
 import logging
 import shutil
 import tempfile
@@ -31,7 +32,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -110,6 +111,75 @@ def _merge_style_intent(previous: str, new_edit: str) -> str:
     )
 
 
+# ── Background pipeline runner ────────────────────────────────────────────────
+#
+# Spawned by upload_rtl via asyncio.create_task so the POST handler can return
+# task_id immediately.  Progress strings are pushed into an asyncio.Queue that
+# the /progress SSE endpoint drains.  call_soon_threadsafe is required because
+# run_pipeline (and therefore every _emit call) executes inside a thread-pool
+# worker, not the event loop thread.
+
+async def _run_pipeline_background(
+    task_id: str,
+    rtl_code: str,
+    customization_text: str,
+) -> None:
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = _tasks[task_id]["progress_queue"]
+
+    def progress_callback(msg: str) -> None:
+        loop.call_soon_threadsafe(q.put_nowait, {"type": "progress", "message": msg})
+
+    session_output_dir = None
+    try:
+        logger.info("Starting background pipeline for task %s", task_id)
+        final = await asyncio.to_thread(
+            run_pipeline,
+            rtl_code,
+            customization_text,  # user_style_prompt
+            "",                  # user_edit_prompt — empty → should_customize returns "no"
+            progress_callback=progress_callback,
+        )
+        session_output_dir = final.get("session_output_dir")
+
+        svg_output = final.get("svg_output")
+        if not svg_output:
+            raise ValueError("Pipeline completed but returned no SVG output.")
+
+        svg_url = _save_svg(task_id, svg_output)
+        logger.info("Task %s complete — diagram saved to %s", task_id, svg_url)
+
+        _tasks[task_id].update({
+            "status": "done",
+            "svg_url": svg_url,
+            "cumulative_style_prompt": (customization_text or "").strip(),
+            "verified_json": final["verified_json"],
+            "style_map": final["style_map"],
+            "dot_source": final["dot_source"],
+        })
+        loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "done", "svg_url": svg_url}
+        )
+
+    except Exception as exc:
+        logger.error("Pipeline failed for task %s:\n%s", task_id, traceback.format_exc())
+        _tasks[task_id].update({"status": "error", "error": str(exc)})
+        loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "pipeline_error", "message": str(exc)}
+        )
+
+    finally:
+        if session_output_dir:
+            try:
+                cleanup_session_output(session_output_dir)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to cleanup session output %s: %s",
+                    session_output_dir,
+                    cleanup_error,
+                )
+
+
 # ── POST /upload-rtl ──────────────────────────────────────────────────────────
 
 @app.post("/upload-rtl")
@@ -119,9 +189,10 @@ async def upload_rtl(
 ):
     """
     1. Validate file extension.
-    2. Save the upload to data/raw/ using shutil.
-    3. Run the agentic pipeline in a thread (it is synchronous/blocking).
-    4. Persist the resulting SVG and return its URL.
+    2. Save the upload to raw/ and read its text.
+    3. Register the task in _tasks with an asyncio.Queue for progress events.
+    4. Spawn _run_pipeline_background as a fire-and-forget asyncio task.
+    5. Return {task_id} immediately — the client polls /progress/{task_id} for updates.
     """
     suffix = Path(rtl_file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -136,65 +207,149 @@ async def upload_rtl(
     task_id   = str(uuid.uuid4())
     save_path = RAW_DIR / f"{task_id}{suffix}"
 
-    # Use shutil.copyfileobj so the file is streamed to disk without loading
-    # the entire contents into memory first.
     with save_path.open("wb") as dest:
         shutil.copyfileobj(rtl_file.file, dest)
 
     rtl_code = save_path.read_text(encoding="utf-8")
 
-    # run_pipeline is synchronous (LangGraph/LangChain); run it in a thread
-    # pool so FastAPI's async event loop is not blocked.
-    # The entire block — pipeline execution, svg_output validation, and file
-    # persistence — is wrapped so no exception escapes as a bare 500.
+    # Register the task before spawning the background coroutine so that the
+    # /progress endpoint can always find it, even if the client connects before
+    # the first _emit fires.
+    _tasks[task_id] = {
+        "status": "running",
+        "progress_queue": asyncio.Queue(),
+        "rtl_code": rtl_code,
+        "customization_text": customization_text,
+        "cumulative_style_prompt": None,
+        "verified_json": None,
+        "style_map": None,
+        "dot_source": None,
+        "svg_url": None,
+        "error": None,
+    }
+
+    asyncio.create_task(_run_pipeline_background(task_id, rtl_code, customization_text))
+
+    return JSONResponse(
+        content={"task_id": task_id},
+        media_type="application/json",
+    )
+
+
+# ── GET /progress/{task_id} ───────────────────────────────────────────────────
+
+@app.get("/progress/{task_id}")
+async def progress_stream(task_id: str):
+    """
+    Server-Sent Events stream for pipeline progress.
+
+    Yields plain `data:` lines for each progress message, then a terminal
+    named event — either `event: done` (with svg_url) or `event: pipeline_error`
+    (with message) — and closes.
+
+    If the pipeline already finished before the client connects, the terminal
+    event is sent immediately from the cached task status.
+    """
+    task = _tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    async def event_generator():
+        # Handle the case where the client connects after the pipeline finished.
+        if task["status"] == "done":
+            yield f"event: done\ndata: {json.dumps({'svg_url': task['svg_url']})}\n\n"
+            return
+        if task["status"] == "error":
+            yield f"event: pipeline_error\ndata: {json.dumps({'message': task['error']})}\n\n"
+            return
+
+        q: asyncio.Queue = task["progress_queue"]
+        while True:
+            item = await q.get()
+            if item["type"] == "progress":
+                # Plain `data:` line — picked up by EventSource.onmessage.
+                yield f"data: {item['message']}\n\n"
+            elif item["type"] == "done":
+                yield f"event: done\ndata: {json.dumps({'svg_url': item['svg_url']})}\n\n"
+                break
+            elif item["type"] == "pipeline_error":
+                yield f"event: pipeline_error\ndata: {json.dumps({'message': item['message']})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # prevents nginx from buffering the stream
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ── Background regeneration runner ───────────────────────────────────────────
+
+async def _run_regeneration_background(
+    new_task_id: str,
+    source_task: dict,
+    verified_json: dict,
+    merged_style_prompt: str,
+) -> None:
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = _tasks[new_task_id]["progress_queue"]
+
+    def progress_callback(msg: str) -> None:
+        loop.call_soon_threadsafe(q.put_nowait, {"type": "progress", "message": msg})
+
     session_output_dir = None
     try:
-        logger.info("Starting pipeline for task %s", task_id)
-
+        logger.info("Starting background regeneration for task %s", new_task_id)
         final = await asyncio.to_thread(
-            run_pipeline,
-            rtl_code,
-            customization_text,   # user_style_prompt
-            "",                   # user_edit_prompt — empty → should_customize returns "no"
-            run_id=task_id,
+            run_regeneration_pipeline,
+            verified_json,
+            merged_style_prompt,
+            run_id=new_task_id,
+            progress_callback=progress_callback,
         )
         session_output_dir = final.get("session_output_dir")
 
-        # Guard: pipeline must return a non-empty SVG string.
-        svg_output = final.get("svg_output") if final else None
-        if not svg_output:
-            raise ValueError(
-                "Pipeline completed but returned no SVG output. "
-                "Ensure run_pipeline populates state['svg_output'] before returning."
-            )
+        svg = final.get("svg_output")
+        if not svg or not final.get("style_map") or not final.get("dot_source"):
+            raise ValueError("Regeneration produced no SVG output.")
 
-        svg_url = _save_svg(task_id, svg_output)
-        logger.info("Task %s complete — diagram saved to %s", task_id, svg_url)
+        svg_url = _save_svg(new_task_id, svg)
+        logger.info("Regeneration complete — task %s", new_task_id)
+
+        _tasks[new_task_id].update({
+            "status": "done",
+            "svg_url": svg_url,
+            "cumulative_style_prompt": merged_style_prompt,
+            "style_map": final["style_map"],
+            "dot_source": final["dot_source"],
+        })
+        loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "done", "svg_url": svg_url}
+        )
 
         s3_cfg = load_s3_artifact_config()
         if s3_cfg:
             upload_run_artifacts_to_s3(
                 s3_cfg,
-                task_id,
-                rtl_code=rtl_code,
+                new_task_id,
+                rtl_code=source_task.get("rtl_code") or "",
                 verified_json=final["verified_json"],
                 style_map=final["style_map"],
                 dot_source=final["dot_source"] or "",
-                svg_output=svg_output,
+                svg_output=svg,
             )
 
-    except HTTPException:
-        raise  # already formatted, pass through as-is
     except Exception as exc:
-        logger.error(
-            "Pipeline failed for task %s:\n%s",
-            task_id,
-            traceback.format_exc(),
+        logger.error("Regeneration failed for task %s:\n%s", new_task_id, traceback.format_exc())
+        _tasks[new_task_id].update({"status": "error", "error": str(exc)})
+        loop.call_soon_threadsafe(
+            q.put_nowait, {"type": "pipeline_error", "message": str(exc)}
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pipeline error: {type(exc).__name__}: {exc}",
-        ) from exc
+
     finally:
         if session_output_dir:
             try:
@@ -205,22 +360,6 @@ async def upload_rtl(
                     session_output_dir,
                     cleanup_error,
                 )
-
-    # Store state for subsequent regenerations.
-    _tasks[task_id] = {
-        "rtl_code": rtl_code,
-        "customization_text": customization_text,
-        "cumulative_style_prompt": (customization_text or "").strip(),
-        "verified_json": final["verified_json"],
-        "style_map": final["style_map"],
-        "dot_source": final["dot_source"],
-        "svg_url": svg_url,
-    }
-
-    return JSONResponse(
-        content={"task_id": task_id, "svg_url": svg_url},
-        media_type="application/json",
-    )
 
 
 # ── POST /regenerate/{task_id} ────────────────────────────────────────────────
@@ -234,9 +373,9 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     """
     Re-style an existing diagram from stored verified_json.
     Skips Architect/Auditor and only runs style->DOT->SVG.
-    The latest edit is merged into a cumulative style prompt so prior edits
-    are preserved unless explicitly overridden.
-    Returns a new { task_id, svg_url }.
+    Registers a new task with a progress queue, spawns the regeneration in
+    the background, and returns {task_id} immediately so the client can
+    connect to /progress/{task_id} for live updates.
     """
     task = _tasks.get(task_id)
     if not task:
@@ -246,78 +385,25 @@ async def regenerate(task_id: str, body: RegenerateRequest):
     if not verified_json:
         raise HTTPException(status_code=500, detail="Task is missing verified_json.")
 
-    cumulative_style_prompt = task.get("cumulative_style_prompt")
-    if cumulative_style_prompt is None:
-        cumulative_style_prompt = task.get("customization_text", "")
-    edit_prompt = body.edit_prompt
-    merged_style_prompt = _merge_style_intent(cumulative_style_prompt, edit_prompt)
+    cumulative_style_prompt = task.get("cumulative_style_prompt") or task.get("customization_text", "")
+    merged_style_prompt = _merge_style_intent(cumulative_style_prompt, body.edit_prompt)
 
-    session_output_dir = None
     new_task_id = str(uuid.uuid4())
-    try:
-        logger.info("Regenerating from task %s", task_id)
-        final = await asyncio.to_thread(
-            run_regeneration_pipeline,
-            verified_json,
-            merged_style_prompt,
-            run_id=new_task_id,
-        )
-        session_output_dir = final.get("session_output_dir")
-        style_map = final.get("style_map")
-        dot_source = final.get("dot_source")
-        svg = final.get("svg_output")
-
-        if not svg or not style_map or not dot_source:
-            raise ValueError("Regeneration produced no SVG output.")
-
-        svg_url = _save_svg(new_task_id, svg)
-        logger.info("Regeneration complete — new task %s", new_task_id)
-
-        s3_cfg = load_s3_artifact_config()
-        if s3_cfg:
-            upload_run_artifacts_to_s3(
-                s3_cfg,
-                new_task_id,
-                rtl_code=task.get("rtl_code") or "",
-                verified_json=verified_json,
-                style_map=style_map,
-                dot_source=dot_source,
-                svg_output=svg,
-            )
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error(
-            "Regeneration failed from task %s:\n%s",
-            task_id,
-            traceback.format_exc(),
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Regeneration error: {type(exc).__name__}: {exc}",
-        ) from exc
-    finally:
-        if session_output_dir:
-            try:
-                cleanup_session_output(session_output_dir)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Failed to cleanup session output %s: %s",
-                    session_output_dir,
-                    cleanup_error,
-                )
-
     _tasks[new_task_id] = {
         **task,
+        "status": "running",
+        "progress_queue": asyncio.Queue(),
         "cumulative_style_prompt": merged_style_prompt,
-        "style_map": style_map,
-        "dot_source": dot_source,
-        "svg_url": svg_url,
+        "svg_url": None,
+        "error": None,
     }
 
+    asyncio.create_task(
+        _run_regeneration_background(new_task_id, task, verified_json, merged_style_prompt)
+    )
+
     return JSONResponse(
-        content={"task_id": new_task_id, "svg_url": svg_url},
+        content={"task_id": new_task_id},
         media_type="application/json",
     )
 
